@@ -1,319 +1,141 @@
-# Six‑Task Funscript Transformer  
-_A structure‑aware, beat‑sensitive post‑processor for funscripts_
+# assessment
 
----
+Structural analysis of a funscript — Step 1 of the four-step workflow.
 
-## 1. What this does
+The `FunscriptAnalyzer` class processes a `.funscript` file and produces an
+`AssessmentResult` containing detected phases, cycles, patterns, phrases, beat
+windows, and auto mode windows. All timestamps are output in both milliseconds
+and human-readable `HH:MM:SS.mmm` format.
 
-This transformer takes an existing `input.funscript` and produces a new `final_output.funscript` that:
-
-- **Slows and smooths** the baseline motion.
-- **Preserves and enhances** selected “performance” regions.
-- **Softens** selected “break” regions.
-- **Copies original motion** in specific “raw” sections you choose.
-- **Breathes with cycles** (cycle‑aware dynamics).
-- **Accents around beats** (beat‑synced micro‑tweaks).
-
-It’s designed to be **data‑driven**: all structure (windows, cycles, beats) comes from JSON files in a single folder, so you can regenerate or hand‑edit them without touching the code.
-
----
-
-## 2. Why it does it
-
-The goal is to turn a raw funscript into something that:
-
-- Respects the **musical/structural flow** (phrases, cycles, beats).
-- Keeps **high‑energy sections** expressive but safe.
-- Keeps **low‑energy sections** gentle and smooth.
-- Lets you **carve out exact regions** where the original script is preserved for experimentation.
-- Stays **modular**: each layer (windows, cycles, beats) can evolve independently.
-
-You get a pipeline that’s closer to “arranging” motion than just editing points.
-
----
-
-## 3. How it works (the six tasks)
-
-All tasks run inside `six_task_transformer.py` in `working_gen/`.
-
-### Task 1 — Default mode
-
-- Applies to everything **outside performance windows**.
-- **Half‑speed timing** (timestamps scaled by `TIME_SCALE`).
-- **Double amplitude** around center (50).
-- **Light smoothing** later via `LPF_DEFAULT`.
-
-This creates a slower, smoother baseline.
-
-### Task 2 — Performance mode
-
-- Applies **inside performance windows**.
-- Keeps **original timing** (no half‑speed).
-- Limits **velocity**, softens **reversals**, compresses into a safe band.
-- Uses a **lighter smoothing** profile (`LPF_PERFORMANCE`).
-
-This keeps high‑energy sections punchy but controlled.
-
-### Task 3 — Break mode
-
-- Applies **inside break windows**.
-- Inherits **half‑speed** timing from Task 1.
-- Pulls positions toward center (50) and reduces amplitude.
-- Uses **stronger smoothing** (`LPF_BREAK`).
-
-This makes break sections gentle and low‑intensity.
-
-### Task 4 — Raw‑preserve mode
-
-- Applies **inside raw windows**.
-- Copies **original timestamps and positions** from `input.funscript`.
-- Skips all other transforms.
-
-This gives you exact “islands” of untouched original motion.
-
-### Task 5 — Cycle‑aware dynamics
-
-- Uses `cycle_segments.json` (cycle start/end in ms).
-- Computes a **0–1 factor** inside each cycle, strongest at the midpoint.
-- Slightly pushes positions away from or toward a center (`CYCLE_DYNAMICS_CENTER`) scaled by `CYCLE_DYNAMICS_STRENGTH`.
-
-This adds a subtle “breathing” feel aligned with cycle structure.
-
-### Task 6 — Beat‑synced accents
-
-- Uses `detected_beats.json` (beat times in ms).
-- For actions near a beat (within `BEAT_ACCENT_RADIUS_MS`), nudges position up or down by `BEAT_ACCENT_AMOUNT`.
-
-This adds small, beat‑locked accents without changing timing.
-
----
-
-## 4. Files and formats
-
-Everything lives in:
+## Pipeline
 
 ```text
-working_gen/
+load() → analyze() → AssessmentResult → save()
 ```
 
-### 4.1 Files you edit manually (timestamps)
+## Usage
 
-You work in **human‑readable timestamps** (`HH:MM:SS.mmm`).
+### Via CLI
 
-#### `raw_windows.json` (Task 4)
-
-```json
-[
-  {
-    "start": "00:03:10.000",
-    "end": "00:03:16.561",
-    "label": "Raw preserve section 1"
-  },
-  {
-    "start": "00:03:27.231",
-    "end": "00:03:31.127",
-    "label": "Raw preserve section 2"
-  }
-]
+```bash
+python cli.py assess path/to/input.funscript [--output assessment.json] [--config config.json]
 ```
 
-#### `manual_performance.json`
+If `--output` is omitted, the JSON is saved alongside the input file with an
+`_assessment.json` suffix.
 
-```json
-[
-  {
-    "start": "00:01:10.000",
-    "end": "00:01:25.000",
-    "label": "Manual performance 1"
-  }
-]
+### Programmatically
+
+```python
+from assessment.analyzer import FunscriptAnalyzer, AnalyzerConfig
+
+analyzer = FunscriptAnalyzer()
+analyzer.load("path/to/input.funscript")
+result = analyzer.analyze()
+result.save("assessment.json")
 ```
 
-#### `manual_break.json`
+With a custom config:
 
-```json
-[
-  {
-    "start": "00:02:05.000",
-    "end": "00:02:12.500",
-    "label": "Manual break 1"
-  }
-]
+```python
+config = AnalyzerConfig(performance_cycle_threshold=8, break_cycle_threshold=1)
+analyzer = FunscriptAnalyzer(config=config)
 ```
 
-The transformer converts these timestamps to milliseconds internally.
+## Classes
 
----
+### `FunscriptAnalyzer`
 
-### 4.2 Files generated by your analysis pipeline (milliseconds)
+| Method | Description |
+| --- | --- |
+| `load(path)` | Load a `.funscript` file |
+| `analyze() -> AssessmentResult` | Run the full analysis pipeline |
 
-You don’t edit these by hand.
+### `AnalyzerConfig`
 
-#### `auto_mode_windows.json`
+| Field | Default | Description |
+| --- | --- | --- |
+| `min_velocity` | `0.02` | Minimum velocity to count as directional motion |
+| `min_phase_duration_ms` | `80` | Minimum phase length in ms |
+| `duration_tolerance` | `0.20` | Max fractional duration difference for similar cycles |
+| `velocity_tolerance` | `0.25` | Max fractional velocity difference for similar cycles |
+| `performance_cycle_threshold` | `5` | Phrases with >= this many cycles → performance window |
+| `break_cycle_threshold` | `2` | Phrases with <= this many cycles → break window |
+
+## Analysis pipeline
+
+### Phases
+
+Directional segments of continuous motion. Each phase is labeled `steady upward motion`,
+`steady downward motion`, or `low-motion plateau`. Both `start_ms`/`end_ms` and
+`start_ts`/`end_ts` are available.
+
+### Cycles
+
+Structural groupings of phases where the direction does not consecutively repeat.
+Each cycle carries an `oscillation_count` (up-down pairs) used to compute per-cycle BPM.
+
+### Patterns
+
+Cycles that share the same direction sequence and similar duration are grouped into
+a pattern. Each pattern records its average duration and how many cycles matched.
+
+### Phrases
+
+Runs of consecutive cycles that all belong to the same pattern. Each phrase carries
+an `oscillation_count` (sum of its cycles) and a computed `bpm` property.
+
+### Auto mode windows
+
+Phrases are classified into three buckets based on cycle count:
+
+| Bucket | Condition |
+| --- | --- |
+| `performance` | `cycle_count >= performance_cycle_threshold` |
+| `default` | between the two thresholds |
+| `break` | `cycle_count <= break_cycle_threshold` |
+
+These windows are the starting point for Step 4 (transform). Manual override windows
+take priority over auto windows on overlap.
+
+## Assessment JSON output
 
 ```json
 {
-  "performance": [
-    { "start": 10000, "end": 15000 }
+  "meta": {
+    "source_file": "input.funscript",
+    "analyzed_at": "2025-01-01T12:00:00",
+    "duration_ms": 360000,
+    "duration_ts": "00:06:00.000",
+    "action_count": 1200,
+    "bpm": 142.5
+  },
+  "phases": [
+    { "start_ms": 0, "start_ts": "00:00:00.000", "end_ms": 250, "end_ts": "00:00:00.250", "label": "steady upward motion" }
   ],
-  "break": [
-    { "start": 20000, "end": 23000 }
+  "cycles": [
+    { "start_ms": 0, "start_ts": "00:00:00.000", "end_ms": 500, "end_ts": "00:00:00.500", "label": "up → down", "oscillation_count": 1, "bpm": 120.0 }
   ],
-  "default": [
-    { "start": 0, "end": 9999 }
-  ]
+  "patterns": [ ... ],
+  "phrases": [
+    { "start_ms": 0, "start_ts": "00:00:00.000", "end_ms": 5000, "end_ts": "00:00:05.000",
+      "pattern_label": "up → down", "cycle_count": 10, "oscillation_count": 10, "bpm": 120.0, "description": "10 cycles of pattern 'up → down'" }
+  ],
+  "beat_windows": [ ... ],
+  "auto_mode_windows": {
+    "performance": [ { "start_ms": 0, "start_ts": "...", "end_ms": 5000, "end_ts": "...", "label": "..." } ],
+    "break": [],
+    "default": []
+  }
 }
 ```
 
-#### `cycle_segments.json`
+## Loading a saved assessment
 
-```json
-[
-  { "start": 1000, "end": 1800, "label": "down → up" },
-  { "start": 1800, "end": 2600, "label": "up → down" }
-]
+```python
+from models import AssessmentResult
+
+result = AssessmentResult.load("assessment.json")
+print(result.bpm)
+print(result.phases)
 ```
-
-#### `detected_beats.json`
-
-```json
-[
-  { "time": 1200, "label": "peak" },
-  { "time": 1500, "label": "valley" }
-]
-```
-
----
-
-### 4.3 Files produced by the transformer
-
-#### `merged_mode_windows.json`
-
-- Snapshot of the **final windows** actually used:
-  - performance (manual + filtered auto)
-  - break (manual + filtered auto)
-  - default (auto)
-  - raw
-
-Useful for debugging and visualization.
-
-#### `final_output.funscript`
-
-- The fully transformed funscript.
-
-#### `transform_log.txt`
-
-- Human‑readable log of:
-  - how many windows were loaded
-  - which auto windows were removed due to manual overrides
-  - whether cycles/beats were found
-  - where outputs were written
-
----
-
-## 5. How manual overrides work
-
-You chose:
-
-> **Manual overrides auto; overlaps are not allowed.**
-
-So the transformer:
-
-1. Loads **manual performance** windows (timestamps → ms).
-2. Loads **auto performance** windows (ms).
-3. **Removes any auto performance window that overlaps a manual one.**
-4. Merges remaining auto + manual into `PERFORMANCE_WINDOWS`.
-
-Same for **break** windows.
-
-Raw windows (Task 4) are separate and always highest priority for copying original motion.
-
-The log tells you how many auto windows were removed:
-
-```text
-Performance windows: auto before=10, after=7, removed=3
-Break windows: auto before=5, after=4, removed=1
-```
-
----
-
-## 6. Step‑by‑step usage
-
-### Step 1 — Create the folder
-
-Create:
-
-```text
-working_gen/
-```
-
-Place `six_task_transformer.py` inside it.
-
-### Step 2 — Add your input funscript
-
-Save your source script as:
-
-```text
-working_gen/input.funscript
-```
-
-### Step 3 — Prepare your manual timestamp files
-
-Create/edit:
-
-- `working_gen/raw_windows.json`
-- `working_gen/manual_performance.json`
-- `working_gen/manual_break.json`
-
-Use the timestamp formats shown above.
-
-You can start with empty arrays if you don’t want any manual windows yet:
-
-```json
-[]
-```
-
-### Step 4 — Run your analysis pipeline
-
-Generate these files (in milliseconds) and drop them into `working_gen/`:
-
-- `auto_mode_windows.json`
-- `cycle_segments.json`
-- `detected_beats.json`
-
-If `cycle_segments.json` or `detected_beats.json` are missing, Tasks 5 and/or 6 simply do nothing (the log will say so).
-
-### Step 5 — Run the transformer
-
-From the directory **above** `working_gen/`:
-
-```bash
-python working_gen/six_task_transformer.py
-```
-
-The script will:
-
-- Load all inputs.
-- Merge manual + auto windows (manual overrides).
-- Run Tasks 1–6.
-- Write:
-  - `working_gen/final_output.funscript`
-  - `working_gen/merged_mode_windows.json`
-  - `working_gen/transform_log.txt`
-
-### Step 6 — Inspect and iterate
-
-- Open `final_output.funscript` in your viewer/player.
-- If something feels off:
-  - Check `transform_log.txt` to see how windows were merged.
-  - Inspect `merged_mode_windows.json` to see the actual ranges used.
-  - Adjust:
-    - `manual_performance.json`
-    - `manual_break.json`
-    - `raw_windows.json`
-    - or your auto‑window generator
-- Re‑run the transformer.
-
----
-
-If you want, we can add a tiny helper script that converts a list of `start/end` timestamps you paste from a text file into `manual_performance.json` or `raw_windows.json` automatically, so you don’t even have to hand‑edit JSON.
