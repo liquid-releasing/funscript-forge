@@ -16,10 +16,73 @@ from __future__ import annotations
 
 from typing import List, Optional
 
+import streamlit as st
+
 from utils import ms_to_timestamp, parse_timestamp
 
 
-def render(project, view_state, proposed_actions: Optional[List[dict]] = None, large_funscript_threshold: int = 10_000) -> None:
+# ------------------------------------------------------------------
+# Selector fragment — the chart + controls as a Streamlit fragment so
+# that scroll/zoom interactions rerun only this section of the page,
+# not the entire app.  Phrase selection triggers a full app rerun via
+# st.rerun(scope="app") to switch into phrase detail mode.
+# ------------------------------------------------------------------
+
+@st.fragment
+def _selector_fragment(
+    funscript_path: str,
+    assessment_dict: dict,
+    duration_ms: int,
+    large_funscript_threshold: int,
+) -> None:
+    import json
+    import time as _time
+    from visualizations.chart_data import compute_chart_data, compute_annotation_bands
+    from visualizations.funscript_chart import FunscriptChart
+
+    view_state = st.session_state.view_state
+
+    with open(funscript_path) as f:
+        original_actions = json.load(f)["actions"]
+
+    phrases = assessment_dict.get("phrases", [])
+    bands   = compute_annotation_bands(assessment_dict)
+
+    _render_controls(view_state, duration_ms, phrases)
+
+    n_actions   = len(original_actions)
+    spinner_msg = (
+        f"Building chart ({n_actions} actions — using fast rendering)…"
+        if n_actions > large_funscript_threshold
+        else f"Building chart ({n_actions} actions)…"
+    )
+    _t0 = _time.time()
+    with st.spinner(spinner_msg):
+        series  = compute_chart_data(original_actions)
+        chart   = FunscriptChart(
+            series, bands, "", duration_ms,
+            large_funscript_threshold=large_funscript_threshold,
+        )
+        _chart_v = st.session_state.get("phrase_sel_chart_instance", 0)
+        ev = chart.render_streamlit(
+            view_state, key=f"chart_phrase_sel_{_chart_v}", height=380
+        )
+    st.caption(f"Chart built in {_time.time() - _t0:.1f}s")
+    _handle_chart_event(ev, view_state, phrases)
+
+    _render_phrase_bar(phrases, view_state)
+
+
+# ------------------------------------------------------------------
+# Public entry point
+# ------------------------------------------------------------------
+
+def render(
+    project,
+    view_state,
+    proposed_actions: Optional[List[dict]] = None,
+    large_funscript_threshold: int = 10_000,
+) -> None:
     """Render the Phrase Selector.
 
     Parameters
@@ -31,27 +94,17 @@ def render(project, view_state, proposed_actions: Optional[List[dict]] = None, l
     proposed_actions:
         Reserved for future editing workflow.
     """
-    import streamlit as st
-
     if not project or not project.is_loaded:
         st.info("Load a funscript to use the Phrase Selector.")
         return
 
-    from visualizations.chart_data import compute_chart_data, compute_annotation_bands
-    from visualizations.funscript_chart import FunscriptChart, HAS_PLOTLY
-
+    from visualizations.funscript_chart import HAS_PLOTLY
     if not HAS_PLOTLY:
         st.error("plotly is required.  Run: pip install plotly")
         return
 
-    import json
-    with open(project.funscript_path) as f:
-        _raw = json.load(f)
-    original_actions = _raw["actions"]
-
     assessment_dict = project.assessment.to_dict()
     phrases         = assessment_dict.get("phrases", [])
-    bands           = compute_annotation_bands(assessment_dict)
     duration_ms     = project.assessment.duration_ms
 
     # Ensure phrases are always shown even if view_state has them toggled off.
@@ -66,34 +119,21 @@ def render(project, view_state, proposed_actions: Optional[List[dict]] = None, l
         _render_phrase_info(view_state, phrases)
         phrase_detail.render(
             phrases=phrases,
-            original_actions=original_actions,
             view_state=view_state,
             duration_ms=duration_ms,
             bpm_threshold=st.session_state.get("bpm_threshold", 120.0),
         )
     else:
         # ------------------------------------------------------------------
-        # Selector mode: controls + chart + phrase bar
+        # Selector mode: chart + controls in a fragment so scroll/zoom
+        # interactions don't flash the whole page.
         # ------------------------------------------------------------------
-        _render_controls(view_state, duration_ms, phrases)
-
-        import time as _time
-        n_actions = len(original_actions)
-        spinner_msg = (
-            f"Building chart ({n_actions} actions — using fast rendering)…"
-            if n_actions > large_funscript_threshold
-            else f"Building chart ({n_actions} actions)…"
+        _selector_fragment(
+            funscript_path=project.funscript_path,
+            assessment_dict=assessment_dict,
+            duration_ms=duration_ms,
+            large_funscript_threshold=large_funscript_threshold,
         )
-        _t0 = _time.time()
-        with st.spinner(spinner_msg):
-            series = compute_chart_data(original_actions)
-            chart  = FunscriptChart(series, bands, "", duration_ms, large_funscript_threshold=large_funscript_threshold)
-            _chart_v = st.session_state.get("phrase_sel_chart_instance", 0)
-            ev     = chart.render_streamlit(view_state, key=f"chart_phrase_sel_{_chart_v}", height=380)
-        st.caption(f"Chart built in {_time.time() - _t0:.1f}s")
-        _handle_chart_event(ev, view_state, phrases)
-
-        _render_phrase_bar(phrases, view_state)
 
 
 # ------------------------------------------------------------------
@@ -102,8 +142,6 @@ def render(project, view_state, proposed_actions: Optional[List[dict]] = None, l
 
 def _render_controls(view_state, duration_ms: int, phrases: list) -> None:
     """Colour mode + time range display + scroll/zoom controls."""
-    import streamlit as st
-
     zoom_start = view_state.zoom_start_ms or 0
     zoom_end   = view_state.zoom_end_ms   or duration_ms
     span       = zoom_end - zoom_start
@@ -147,7 +185,7 @@ def _render_controls(view_state, duration_ms: int, phrases: list) -> None:
         t1_ms = parse_timestamp(t1_val)
         if t0_ms != zoom_start or t1_ms != zoom_end:
             view_state.set_zoom(t0_ms, t1_ms)
-            st.rerun()
+            st.rerun()   # fragment rerun — just updates the chart
     except Exception:
         pass
 
@@ -155,32 +193,32 @@ def _render_controls(view_state, duration_ms: int, phrases: list) -> None:
         if st.button("◀", key="scroll_left", help="Scroll left", width="stretch"):
             new_start = max(0, zoom_start - scroll_step)
             view_state.set_zoom(new_start, new_start + span)
-            st.rerun()
+            st.rerun()   # fragment rerun
 
     with col_right:
         if st.button("▶", key="scroll_right", help="Scroll right", width="stretch"):
             new_end = min(duration_ms, zoom_end + scroll_step)
             view_state.set_zoom(new_end - span, new_end)
-            st.rerun()
+            st.rerun()   # fragment rerun
 
     with col_all:
         if st.button("All", key="reset_zoom", help="Show full funscript", width="stretch"):
             view_state.reset_zoom()
-            st.rerun()
+            st.rerun()   # fragment rerun
 
     with col_zin:
         if st.button("＋", key="zoom_in", help="Zoom in (halve window)", width="stretch"):
             mid  = (zoom_start + zoom_end) // 2
             half = max(span // 4, 5_000)
             view_state.set_zoom(max(0, mid - half), min(duration_ms, mid + half))
-            st.rerun()
+            st.rerun()   # fragment rerun
 
     with col_zout:
         if st.button("－", key="zoom_out", help="Zoom out (double window)", width="stretch"):
             mid  = (zoom_start + zoom_end) // 2
             half = min(span, duration_ms)
             view_state.set_zoom(max(0, mid - half), min(duration_ms, mid + half))
-            st.rerun()
+            st.rerun()   # fragment rerun
 
 
 # ------------------------------------------------------------------
@@ -189,8 +227,6 @@ def _render_controls(view_state, duration_ms: int, phrases: list) -> None:
 
 def _handle_chart_event(event, view_state, phrases: list) -> None:
     """Map a Plotly point-click or box-select event to a ViewState update."""
-    import streamlit as st
-
     if not event:
         return
     sel = getattr(event, "selection", None)
@@ -205,7 +241,7 @@ def _handle_chart_event(event, view_state, phrases: list) -> None:
             phrase = _find_phrase_at(int(x), phrases)
             if phrase:
                 _select_phrase(phrase, view_state)
-                st.rerun()
+                st.rerun(scope="app")   # full rerun → switches to detail mode
         return
 
     # Box drag → manual time range selection
@@ -215,7 +251,7 @@ def _handle_chart_event(event, view_state, phrases: list) -> None:
             x_range = box[0].get("x", [])
             if len(x_range) == 2:
                 view_state.set_selection(int(x_range[0]), int(x_range[1]))
-                st.rerun()
+                st.rerun(scope="app")   # full rerun
         except Exception:
             pass
 
@@ -226,8 +262,6 @@ def _handle_chart_event(event, view_state, phrases: list) -> None:
 
 def _render_phrase_bar(phrases: list, view_state) -> None:
     """A numbered button for each phrase; clicking selects it."""
-    import streamlit as st
-
     if not phrases:
         return
 
@@ -257,7 +291,7 @@ def _render_phrase_bar(phrases: list, view_state) -> None:
             with cols[col_idx]:
                 if st.button(label, key=f"phrase_btn_{idx}", help=tip):
                     _select_phrase(ph, view_state)
-                    st.rerun()
+                    st.rerun(scope="app")   # full rerun → switches to detail mode
 
 
 # ------------------------------------------------------------------
@@ -266,8 +300,6 @@ def _render_phrase_bar(phrases: list, view_state) -> None:
 
 def _render_phrase_info(view_state, phrases: list) -> None:
     """Show a compact table row for the selected phrase."""
-    import streamlit as st
-
     start = view_state.selection_start_ms
     end   = view_state.selection_end_ms
 
