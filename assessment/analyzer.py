@@ -1,14 +1,14 @@
 """FunscriptAnalyzer: structural analysis of a funscript.
 
-Replaces the four procedural assessment scripts (1-4) with a single class
-that can be driven from a CLI or a UI.
-
 Pipeline:
   load() → analyze() → AssessmentResult
 
-The AssessmentResult can be saved as a single JSON file containing:
-  phases, cycles, patterns, phrases, beat_windows, auto_mode_windows
-  — all with both millisecond and human-readable timestamp fields.
+The AssessmentResult contains:
+  phases, cycles, patterns, phrases — all with both millisecond and
+  human-readable timestamp fields, plus per-phrase BPM.
+
+  bpm_transitions — list of significant BPM changes between consecutive phrases,
+  flagged when the change exceeds bpm_change_threshold_pct.
 """
 
 import json
@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import List, Optional
 
-from models import Phase, Cycle, Pattern, Phrase, Window, AssessmentResult
+from models import Phase, Cycle, Pattern, Phrase, BpmTransition, AssessmentResult
 from utils import ms_to_timestamp
 
 
@@ -27,10 +27,8 @@ class AnalyzerConfig:
     min_phase_duration_ms: int = 80
     duration_tolerance: float = 0.20
     velocity_tolerance: float = 0.25
-    # Phrases with >= this many cycles → performance window
-    performance_cycle_threshold: int = 5
-    # Phrases with <= this many cycles → break window
-    break_cycle_threshold: int = 2
+    # Flag BPM transitions whose absolute percentage change exceeds this value
+    bpm_change_threshold_pct: float = 40.0
 
 
 class FunscriptAnalyzer:
@@ -69,8 +67,7 @@ class FunscriptAnalyzer:
         cycles = self._detect_cycles(phases)
         patterns = self._detect_patterns(cycles)
         phrases = self._detect_phrases(patterns)
-        beat_windows = self._generate_beat_windows(cycles, phrases)
-        auto_mode_windows = self._generate_auto_mode_windows(phrases)
+        bpm_transitions = self._detect_bpm_transitions(phrases)
 
         return AssessmentResult(
             source_file=self._source_file,
@@ -81,8 +78,7 @@ class FunscriptAnalyzer:
             cycles=cycles,
             patterns=patterns,
             phrases=phrases,
-            beat_windows=beat_windows,
-            auto_mode_windows=auto_mode_windows,
+            bpm_transitions=bpm_transitions,
         )
 
     # ------------------------------------------------------------------
@@ -190,7 +186,7 @@ class FunscriptAnalyzer:
         return patterns
 
     # ------------------------------------------------------------------
-    # Phrase boundary detection
+    # Phrase detection
     # ------------------------------------------------------------------
 
     def _detect_phrases(self, patterns: List[Pattern]) -> List[Phrase]:
@@ -228,36 +224,33 @@ class FunscriptAnalyzer:
         return phrases
 
     # ------------------------------------------------------------------
-    # Beat windows (cycle + phrase boundaries)
+    # BPM transition detection
     # ------------------------------------------------------------------
 
-    def _generate_beat_windows(
-        self, cycles: List[Cycle], phrases: List[Phrase]
-    ) -> List[Window]:
-        windows: List[Window] = []
-        for cy in cycles:
-            windows.append(Window(cy.start_ms, cy.end_ms, f"cycle beat ({cy.label})"))
-        for ph in phrases:
-            windows.append(Window(ph.start_ms, ph.end_ms, f"phrase ({ph.pattern_label})"))
-        return windows
+    def _detect_bpm_transitions(self, phrases: List[Phrase]) -> List[BpmTransition]:
+        """Flag consecutive phrase pairs where BPM changes significantly."""
+        transitions: List[BpmTransition] = []
+        threshold = self.config.bpm_change_threshold_pct
 
-    # ------------------------------------------------------------------
-    # Auto mode window classification
-    # ------------------------------------------------------------------
+        for i in range(1, len(phrases)):
+            prev = phrases[i - 1]
+            curr = phrases[i]
+            from_bpm = prev.bpm
+            to_bpm = curr.bpm
 
-    def _generate_auto_mode_windows(
-        self, phrases: List[Phrase]
-    ) -> dict:
-        cfg = self.config
-        result: dict = {"performance": [], "break": [], "default": []}
-        for ph in phrases:
-            if ph.cycle_count >= cfg.performance_cycle_threshold:
-                result["performance"].append(Window(ph.start_ms, ph.end_ms, ph.description))
-            elif ph.cycle_count <= cfg.break_cycle_threshold:
-                result["break"].append(Window(ph.start_ms, ph.end_ms, ph.description))
-            else:
-                result["default"].append(Window(ph.start_ms, ph.end_ms, ph.description))
-        return result
+            if from_bpm <= 0:
+                continue
+
+            change_pct = (to_bpm - from_bpm) / from_bpm * 100
+            if abs(change_pct) >= threshold:
+                transitions.append(BpmTransition(
+                    at_ms=curr.start_ms,
+                    from_bpm=round(from_bpm, 2),
+                    to_bpm=round(to_bpm, 2),
+                    change_pct=round(change_pct, 1),
+                ))
+
+        return transitions
 
     # ------------------------------------------------------------------
     # Helpers

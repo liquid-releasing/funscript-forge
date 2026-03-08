@@ -2,7 +2,7 @@
 
 import json
 from dataclasses import dataclass, field
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 from utils import ms_to_timestamp
 
@@ -145,6 +145,46 @@ class Phrase:
 
 
 @dataclass
+class BpmTransition:
+    """A significant BPM change detected between consecutive phrases."""
+    at_ms: int          # timestamp where the transition occurs (start of the new phrase)
+    from_bpm: float     # BPM of the preceding phrase
+    to_bpm: float       # BPM of the incoming phrase
+    change_pct: float   # signed percentage change: (to - from) / from * 100
+
+    @property
+    def at_ts(self) -> str:
+        return ms_to_timestamp(self.at_ms)
+
+    @property
+    def description(self) -> str:
+        direction = "rises" if self.to_bpm > self.from_bpm else "drops"
+        return (
+            f"BPM {direction} from {self.from_bpm:.1f} to {self.to_bpm:.1f} "
+            f"({self.change_pct:+.1f}%) at {self.at_ts}"
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "at_ms": self.at_ms,
+            "at_ts": self.at_ts,
+            "from_bpm": self.from_bpm,
+            "to_bpm": self.to_bpm,
+            "change_pct": self.change_pct,
+            "description": self.description,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "BpmTransition":
+        return cls(
+            d["at_ms"],
+            d["from_bpm"],
+            d["to_bpm"],
+            d["change_pct"],
+        )
+
+
+@dataclass
 class Window:
     start_ms: int
     end_ms: int
@@ -182,8 +222,7 @@ class AssessmentResult:
     cycles: List[Cycle]
     patterns: List[Pattern]
     phrases: List[Phrase]
-    beat_windows: List[Window]
-    auto_mode_windows: Dict[str, List[Window]]
+    bpm_transitions: List[BpmTransition] = field(default_factory=list)
 
     @property
     def duration_ts(self) -> str:
@@ -191,12 +230,7 @@ class AssessmentResult:
 
     @property
     def bpm(self) -> float:
-        """Average oscillations per minute, derived from directional phase count.
-
-        Each up-phase + down-phase pair counts as one oscillation (one beat).
-        This is independent of structural cycle grouping, which can span many
-        oscillations and would undercount BPM on pure alternating scripts.
-        """
+        """Average oscillations per minute derived from directional phase count."""
         active = sum(
             1 for p in self.phases
             if "upward" in p.label or "downward" in p.label
@@ -204,6 +238,13 @@ class AssessmentResult:
         if active == 0 or self.duration_ms <= 0:
             return 0.0
         return round((active / 2) * 60_000 / self.duration_ms, 2)
+
+    def phrase_at(self, t_ms: int) -> Optional[Phrase]:
+        """Return the phrase containing timestamp t_ms, or None."""
+        for ph in self.phrases:
+            if ph.start_ms <= t_ms <= ph.end_ms:
+                return ph
+        return None
 
     def to_dict(self) -> dict:
         return {
@@ -215,15 +256,11 @@ class AssessmentResult:
                 "action_count": self.action_count,
                 "bpm": self.bpm,
             },
-            "phases": [p.to_dict() for p in self.phases],
+            "bpm_transitions": [t.to_dict() for t in self.bpm_transitions],
+            "phrases": [p.to_dict() for p in self.phrases],
             "cycles": [c.to_dict() for c in self.cycles],
             "patterns": [p.to_dict() for p in self.patterns],
-            "phrases": [p.to_dict() for p in self.phrases],
-            "beat_windows": [w.to_dict() for w in self.beat_windows],
-            "auto_mode_windows": {
-                mode: [w.to_dict() for w in windows]
-                for mode, windows in self.auto_mode_windows.items()
-            },
+            "phases": [p.to_dict() for p in self.phases],
         }
 
     @classmethod
@@ -234,15 +271,11 @@ class AssessmentResult:
             analyzed_at=meta["analyzed_at"],
             duration_ms=meta["duration_ms"],
             action_count=meta["action_count"],
-            phases=[Phase.from_dict(p) for p in d["phases"]],
-            cycles=[Cycle.from_dict(c) for c in d["cycles"]],
-            patterns=[Pattern.from_dict(p) for p in d["patterns"]],
-            phrases=[Phrase.from_dict(p) for p in d["phrases"]],
-            beat_windows=[Window.from_dict(w) for w in d["beat_windows"]],
-            auto_mode_windows={
-                mode: [Window.from_dict(w) for w in windows]
-                for mode, windows in d["auto_mode_windows"].items()
-            },
+            phases=[Phase.from_dict(p) for p in d.get("phases", [])],
+            cycles=[Cycle.from_dict(c) for c in d.get("cycles", [])],
+            patterns=[Pattern.from_dict(p) for p in d.get("patterns", [])],
+            phrases=[Phrase.from_dict(p) for p in d.get("phrases", [])],
+            bpm_transitions=[BpmTransition.from_dict(t) for t in d.get("bpm_transitions", [])],
         )
 
     def save(self, path: str) -> None:
