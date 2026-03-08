@@ -54,7 +54,7 @@ class ViewState:
     show_cycles:      bool = False
     show_patterns:    bool = False
     show_phrases:     bool = True
-    show_transitions: bool = True
+    show_transitions: bool = False
 
     # ------------------------------------------------------------------
     # Helpers

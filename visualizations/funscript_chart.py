@@ -1,23 +1,17 @@
 """funscript_chart.py — Reusable Plotly-based funscript chart widget.
 
 Renders a single funscript channel as a colour-coded line chart with
-optional assessment annotation bands and a selection highlight.
-
-Designed to be instantiated once per panel and called via
-``render_streamlit()`` which returns any Plotly selection event data
-for the caller to act on.
+phrase annotation boxes and an optional selection highlight.
 
 Requirements
 ------------
     pip install plotly
-
-The ``HAS_PLOTLY`` flag lets callers degrade gracefully if plotly is not
-installed.
 """
 
 from __future__ import annotations
 
-from typing import List, Optional
+from math import ceil
+from typing import List, Optional, Tuple
 
 from visualizations.chart_data import (
     AnnotationBand,
@@ -33,9 +27,10 @@ except ImportError:
     HAS_PLOTLY = False
 
 
-# Height of each annotation row band as a fraction of the [0,100] y-axis
-_BAND_HEIGHT = 4.0   # position units per row band
-_BAND_BASE   = 101.0  # y position where annotation rows start (above the chart)
+# When the zoom window contains more action points than this threshold,
+# fall back to a single trace (coloured markers + faint grey line).
+# Below the threshold, each segment is drawn as its own coloured trace.
+_MAX_SEGMENT_TRACES = 400
 
 
 class FunscriptChart:
@@ -72,14 +67,13 @@ class FunscriptChart:
 
     def render_streamlit(
         self,
-        view_state,           # ViewState — imported lazily to avoid circular dep
+        view_state,
         key: str = "chart",
         height: int = 300,
     ):
         """Render the chart inside a Streamlit app.
 
-        Returns the Plotly selection event dict (may be None or empty).
-        Requires plotly and streamlit to be installed.
+        Returns the Plotly event dict (may be None or empty).
         """
         import streamlit as st
 
@@ -93,7 +87,7 @@ class FunscriptChart:
                 fig,
                 key=key,
                 on_select="rerun",
-                selection_mode="box",
+                selection_mode=["points", "box"],
                 use_container_width=True,
             )
         except TypeError:
@@ -102,7 +96,7 @@ class FunscriptChart:
                 fig,
                 key=key,
                 on_select="rerun",
-                selection_mode="box",
+                selection_mode=["points", "box"],
             )
         return event
 
@@ -122,107 +116,142 @@ class FunscriptChart:
         else:
             s = self.series
             visible_bands = self.bands
-            zoom_start = s.times_ms[0] if s.times_ms else 0
+            zoom_start = s.times_ms[0]  if s.times_ms else 0
             zoom_end   = s.times_ms[-1] if s.times_ms else self.duration_ms
 
         colors = s.colors_velocity if color_mode == "velocity" else s.colors_amplitude
 
         fig = go.Figure()
 
-        # --- Annotation bands (background) ---
+        # --- Annotation bands ---
         enabled_kinds = view_state.enabled_kinds()
+        # Phrases are always shown as boxed regions
+        enabled_with_phrases = set(enabled_kinds) | {"phrase"}
+
         for band in visible_bands:
-            if band.kind not in enabled_kinds:
+            if band.kind not in enabled_with_phrases:
                 continue
-            if band.kind == "transition":
-                # Vertical line marker
+
+            if band.kind == "phrase":
+                # Highlight selected phrase differently
+                is_selected = (
+                    view_state.has_selection()
+                    and view_state.selection_start_ms == band.start_ms
+                    and view_state.selection_end_ms   == band.end_ms
+                )
+                border = "rgba(255,220,50,0.9)"  if is_selected else "rgba(218,112,214,0.55)"
+                fill   = "rgba(255,220,50,0.07)" if is_selected else "rgba(218,112,214,0.07)"
+                fig.add_vrect(
+                    x0=band.start_ms, x1=band.end_ms,
+                    fillcolor=fill,
+                    line_width=1, line_color=border,
+                    layer="below",
+                    annotation_text=band.label[:30],
+                    annotation_position="top left",
+                    annotation_font_size=9,
+                    annotation_font_color=border,
+                )
+
+            elif band.kind == "transition":
                 fig.add_vline(
                     x=band.start_ms,
-                    line_width=2,
-                    line_dash="dash",
-                    line_color="rgba(255,99,71,0.8)",
+                    line_width=1, line_dash="dash",
+                    line_color="rgba(255,99,71,0.65)",
                     annotation_text=band.label,
                     annotation_position="top right",
-                    annotation_font_size=9,
+                    annotation_font_size=8,
                 )
+
             else:
                 fig.add_vrect(
-                    x0=band.start_ms,
-                    x1=band.end_ms,
-                    fillcolor=band.color,
-                    layer="below",
+                    x0=band.start_ms, x1=band.end_ms,
+                    fillcolor=band.color, layer="below",
                     line_width=0,
                     annotation_text=band.label[:20],
                     annotation_position="top left",
                     annotation_font_size=8,
                 )
 
-        # --- Selection highlight ---
+        # --- Selection dim (outside selection) ---
         if view_state.has_selection():
             sel_s = view_state.selection_start_ms
             sel_e = view_state.selection_end_ms
-            # Outside-selection dim
             if sel_s > zoom_start:
                 fig.add_vrect(
                     x0=zoom_start, x1=sel_s,
-                    fillcolor="rgba(0,0,0,0.30)", layer="above",
-                    line_width=0,
+                    fillcolor="rgba(0,0,0,0.25)", layer="above", line_width=0,
                 )
             if sel_e < zoom_end:
                 fig.add_vrect(
                     x0=sel_e, x1=zoom_end,
-                    fillcolor="rgba(0,0,0,0.30)", layer="above",
-                    line_width=0,
+                    fillcolor="rgba(0,0,0,0.25)", layer="above", line_width=0,
                 )
-            # Selection border
-            fig.add_vrect(
-                x0=sel_s, x1=sel_e,
-                fillcolor="rgba(255,255,255,0.05)",
-                line_width=2, line_color="rgba(255,255,255,0.8)",
-                layer="above",
-            )
 
         # --- Motion line ---
-        if s.times_ms:
+        n = len(s.times_ms)
+
+        if n > 1 and (n - 1) <= _MAX_SEGMENT_TRACES:
+            # Per-segment coloured lines — each segment gets the colour of
+            # its start point, giving a velocity/amplitude heat-map effect.
+            for i in range(n - 1):
+                fig.add_trace(go.Scatter(
+                    x=[s.times_ms[i], s.times_ms[i + 1]],
+                    y=[s.positions[i], s.positions[i + 1]],
+                    mode="lines",
+                    line=dict(color=colors[i], width=2),
+                    showlegend=False,
+                    hoverinfo="skip",
+                ))
+            # Markers on top for hover and point-click detection
+            fig.add_trace(go.Scatter(
+                x=s.times_ms,
+                y=s.positions,
+                mode="markers",
+                marker=dict(color=colors, size=5, line=dict(width=0)),
+                hovertemplate="t=%{x} ms  pos=%{y}<extra></extra>",
+                name=self.title,
+            ))
+
+        elif n > 0:
+            # Full-view fallback: single trace with coloured markers and
+            # a faint grey connecting line for shape context.
             fig.add_trace(go.Scatter(
                 x=s.times_ms,
                 y=s.positions,
                 mode="lines+markers",
-                marker=dict(
-                    color=colors,
-                    size=4,
-                    showscale=False,
-                ),
-                line=dict(color="rgba(200,200,200,0.4)", width=1),
-                hovertemplate=(
-                    "t=%{x} ms<br>pos=%{y}<extra></extra>"
-                ),
+                marker=dict(color=colors, size=3, line=dict(width=0)),
+                line=dict(color="rgba(160,160,160,0.3)", width=1),
+                hovertemplate="t=%{x} ms  pos=%{y}<extra></extra>",
                 name=self.title,
             ))
 
         # --- Layout ---
+        tickvals, ticktext = _compute_ticks(zoom_start, zoom_end)
+
         fig.update_layout(
-            title=dict(text=self.title, font=dict(size=12)),
+            title=dict(text=self.title, font=dict(size=12)) if self.title else None,
             height=height,
-            margin=dict(l=40, r=10, t=30, b=30),
+            margin=dict(l=45, r=10, t=30 if self.title else 10, b=30),
             paper_bgcolor="#0e1117",
             plot_bgcolor="#1a1d23",
             font=dict(color="#cccccc"),
             xaxis=dict(
-                title="Time (ms)",
+                title=None,
                 range=[zoom_start, zoom_end],
                 color="#aaaaaa",
                 gridcolor="#2a2d35",
-                tickformat=_ms_tickformat(zoom_end - zoom_start),
+                tickvals=tickvals,
+                ticktext=ticktext,
+                tickangle=0,
             ),
             yaxis=dict(
-                title="Position",
+                title="pos",
                 range=[-2, 102],
                 color="#aaaaaa",
                 gridcolor="#2a2d35",
             ),
             showlegend=False,
-            dragmode="select",   # box-select by default
+            dragmode="pan",   # drag to scroll left/right; click a point to select phrase
         )
 
         return fig
@@ -232,10 +261,28 @@ class FunscriptChart:
 # Helpers
 # ------------------------------------------------------------------
 
-def _ms_tickformat(span_ms: int) -> str:
-    """Choose a readable x-axis tick format based on the visible span."""
-    if span_ms > 60_000:
-        return "%M:%S"
-    if span_ms > 5_000:
-        return "%S.%L s"
-    return "%L ms"
+def _compute_ticks(start_ms: int, end_ms: int) -> Tuple[List[int], List[str]]:
+    """Return (tickvals, ticktext) for a human-readable time axis."""
+    span = end_ms - start_ms
+    if   span > 600_000: step = 60_000
+    elif span > 120_000: step = 30_000
+    elif span > 30_000:  step = 10_000
+    elif span > 10_000:  step = 5_000
+    elif span > 3_000:   step = 1_000
+    else:                step = 500
+
+    first = ceil(start_ms / step) * step
+    vals  = list(range(first, end_ms + 1, step))
+    texts = [_format_ms(v) for v in vals]
+    return vals, texts
+
+
+def _format_ms(ms: int) -> str:
+    """Format milliseconds as M:SS or M:SS.t (tenths of a second)."""
+    total_s = ms // 1000
+    m  = total_s // 60
+    s  = total_s % 60
+    sub = ms % 1000
+    if sub == 0:
+        return f"{m}:{s:02d}"
+    return f"{m}:{s:02d}.{sub // 100}"

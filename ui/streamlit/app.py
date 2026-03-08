@@ -207,8 +207,8 @@ def _main() -> None:
         )
         return
 
-    tab_viewer, tab_assessment, tab_work_items, tab_edit, tab_export = st.tabs(
-        ["Viewer", "Assessment", "Work Items", "Edit", "Export"]
+    tab_viewer, tab_assessment, tab_nav, tab_work_items, tab_edit, tab_export = st.tabs(
+        ["Phrase Selector", "Assessment", "Navigator", "Work Items", "Edit", "Export"]
     )
 
     with tab_viewer:
@@ -216,6 +216,10 @@ def _main() -> None:
 
     with tab_assessment:
         assessment_panel.render(project)
+
+    with tab_nav:
+        st.subheader("Assessment Navigator")
+        assessment_nav_panel.render(project, view_state=st.session_state.view_state)
 
     with tab_work_items:
         work_items_panel.render(project)
@@ -229,22 +233,7 @@ def _main() -> None:
 
 def _render_viewer_tab(project: Project) -> None:
     view_state = st.session_state.view_state
-
-    left, right = st.columns([3, 1])
-
-    with right:
-        st.subheader("Navigate")
-        assessment_nav_panel.render(project, view_state)
-
-    with left:
-        committed = viewer_panel.render(
-            project,
-            view_state,
-            proposed_actions=st.session_state.proposed_actions,
-        )
-        if committed is not None:
-            # User pressed Commit — re-run assessment on committed actions
-            _commit_actions(project, committed)
+    viewer_panel.render(project, view_state)
 
 
 def _commit_actions(project: Project, committed_actions: list) -> None:
