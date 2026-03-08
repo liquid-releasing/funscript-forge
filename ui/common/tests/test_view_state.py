@@ -28,7 +28,7 @@ class TestViewStateDefaults(unittest.TestCase):
         vs = ViewState()
         self.assertFalse(vs.show_cycles)
         self.assertTrue(vs.show_phrases)
-        self.assertTrue(vs.show_transitions)
+        self.assertFalse(vs.show_transitions)
         self.assertFalse(vs.show_phases)
         self.assertFalse(vs.show_patterns)
 
@@ -84,15 +84,15 @@ class TestViewStateEnabledKinds(unittest.TestCase):
     def test_default_enabled_kinds(self):
         vs = ViewState()
         kinds = vs.enabled_kinds()
-        self.assertNotIn("cycle",   kinds)
-        self.assertIn("phrase",     kinds)
-        self.assertIn("transition", kinds)
-        self.assertNotIn("phase",   kinds)
-        self.assertNotIn("pattern", kinds)
+        self.assertNotIn("cycle",      kinds)
+        self.assertIn("phrase",        kinds)
+        self.assertNotIn("transition", kinds)
+        self.assertNotIn("phase",      kinds)
+        self.assertNotIn("pattern",    kinds)
 
     def test_toggle_all_on(self):
         vs = ViewState()
-        vs.show_phases = vs.show_cycles = vs.show_patterns = True
+        vs.show_phases = vs.show_cycles = vs.show_patterns = vs.show_transitions = True
         kinds = vs.enabled_kinds()
         self.assertEqual(set(kinds), {"phase", "cycle", "pattern", "phrase", "transition"})
 
