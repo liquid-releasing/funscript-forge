@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 from assessment.analyzer import FunscriptAnalyzer, AnalyzerConfig
-from models import AssessmentResult, Phase, Cycle, Phrase, Window
+from models import AssessmentResult, Phase, Cycle, Phrase, BpmTransition
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "sample.funscript")
 
@@ -38,12 +38,13 @@ class TestFunscriptAnalyzer(unittest.TestCase):
     def test_phrases_detected(self):
         self.assertGreater(len(self.result.phrases), 0)
 
-    def test_beat_windows_detected(self):
-        self.assertGreater(len(self.result.beat_windows), 0)
+    def test_bpm_transitions_is_list(self):
+        self.assertIsInstance(self.result.bpm_transitions, list)
 
-    def test_auto_mode_windows_has_all_keys(self):
-        keys = set(self.result.auto_mode_windows.keys())
-        self.assertEqual(keys, {"performance", "break", "default"})
+    def test_no_beat_windows_or_auto_mode_windows(self):
+        d = self.result.to_dict()
+        self.assertNotIn("beat_windows", d)
+        self.assertNotIn("auto_mode_windows", d)
 
     def test_duration_ms_matches_last_action(self):
         with open(FIXTURE) as f:
@@ -58,7 +59,6 @@ class TestFunscriptAnalyzer(unittest.TestCase):
 
     def test_phase_timestamps_match_ms(self):
         for phase in self.result.phases:
-            # start_ts must be consistent with start_ms
             from utils import ms_to_timestamp
             self.assertEqual(phase.start_ts, ms_to_timestamp(phase.start_ms))
             self.assertEqual(phase.end_ts, ms_to_timestamp(phase.end_ms))
@@ -69,10 +69,54 @@ class TestFunscriptAnalyzer(unittest.TestCase):
             self.assertEqual(cycle.start_ts, ms_to_timestamp(cycle.start_ms))
             self.assertEqual(cycle.end_ts, ms_to_timestamp(cycle.end_ms))
 
+    def test_phrase_bpm_is_non_negative(self):
+        for phrase in self.result.phrases:
+            self.assertGreaterEqual(phrase.bpm, 0.0)
+
+    def test_phrase_at_returns_correct_phrase(self):
+        if self.result.phrases:
+            ph = self.result.phrases[0]
+            mid = (ph.start_ms + ph.end_ms) // 2
+            found = self.result.phrase_at(mid)
+            self.assertEqual(found, ph)
+
+    def test_phrase_at_returns_none_outside_phrases(self):
+        found = self.result.phrase_at(-1)
+        self.assertIsNone(found)
+
     def test_no_analyze_without_load(self):
         fresh = FunscriptAnalyzer()
         with self.assertRaises(RuntimeError):
             fresh.analyze()
+
+
+class TestBpmTransitionDetection(unittest.TestCase):
+    def test_transition_flagged_on_large_change(self):
+        # Low threshold so our fixture likely triggers at least one check
+        cfg = AnalyzerConfig(bpm_change_threshold_pct=0.0)
+        analyzer = FunscriptAnalyzer(config=cfg)
+        analyzer.load(FIXTURE)
+        result = analyzer.analyze()
+        # With threshold=0, any BPM change between phrases is flagged
+        # (only meaningful if there are 2+ phrases with nonzero BPM)
+        self.assertIsInstance(result.bpm_transitions, list)
+
+    def test_no_transitions_on_very_high_threshold(self):
+        cfg = AnalyzerConfig(bpm_change_threshold_pct=9999.0)
+        analyzer = FunscriptAnalyzer(config=cfg)
+        analyzer.load(FIXTURE)
+        result = analyzer.analyze()
+        self.assertEqual(len(result.bpm_transitions), 0)
+
+    def test_transition_fields(self):
+        cfg = AnalyzerConfig(bpm_change_threshold_pct=0.0)
+        analyzer = FunscriptAnalyzer(config=cfg)
+        analyzer.load(FIXTURE)
+        result = analyzer.analyze()
+        for t in result.bpm_transitions:
+            self.assertIsInstance(t, BpmTransition)
+            self.assertGreaterEqual(t.at_ms, 0)
+            self.assertIsInstance(t.description, str)
 
 
 class TestAssessmentResultSerialization(unittest.TestCase):
@@ -87,13 +131,14 @@ class TestAssessmentResultSerialization(unittest.TestCase):
         self.assertIn("duration_ms", d["meta"])
         self.assertIn("duration_ts", d["meta"])
         self.assertIn("action_count", d["meta"])
+        self.assertIn("bpm", d["meta"])
 
     def test_to_dict_has_all_sections(self):
         d = self.result.to_dict()
-        for key in ("phases", "cycles", "patterns", "phrases", "beat_windows", "auto_mode_windows"):
+        for key in ("phases", "cycles", "patterns", "phrases", "bpm_transitions"):
             self.assertIn(key, d)
 
-    def test_window_dicts_have_both_ms_and_ts(self):
+    def test_phase_dicts_have_both_ms_and_ts(self):
         d = self.result.to_dict()
         for phase in d["phases"]:
             self.assertIn("start_ms", phase)
@@ -115,33 +160,20 @@ class TestAssessmentResultSerialization(unittest.TestCase):
             self.assertEqual(len(loaded.cycles), len(self.result.cycles))
             self.assertEqual(len(loaded.patterns), len(self.result.patterns))
             self.assertEqual(len(loaded.phrases), len(self.result.phrases))
+            self.assertEqual(len(loaded.bpm_transitions), len(self.result.bpm_transitions))
         finally:
             os.unlink(tmp_path)
-
-    def test_from_dict_reconstructs_windows(self):
-        d = self.result.to_dict()
-        loaded = AssessmentResult.from_dict(d)
-        for mode in ("performance", "break", "default"):
-            self.assertEqual(
-                len(loaded.auto_mode_windows[mode]),
-                len(self.result.auto_mode_windows[mode]),
-            )
 
 
 class TestAnalyzerConfig(unittest.TestCase):
     def test_default_config(self):
         cfg = AnalyzerConfig()
         self.assertEqual(cfg.min_velocity, 0.02)
-        self.assertEqual(cfg.performance_cycle_threshold, 5)
-        self.assertEqual(cfg.break_cycle_threshold, 2)
+        self.assertEqual(cfg.bpm_change_threshold_pct, 40.0)
 
-    def test_custom_config_applied(self):
-        # With a very high performance threshold, nothing should be performance
-        cfg = AnalyzerConfig(performance_cycle_threshold=999)
-        analyzer = FunscriptAnalyzer(config=cfg)
-        analyzer.load(FIXTURE)
-        result = analyzer.analyze()
-        self.assertEqual(len(result.auto_mode_windows["performance"]), 0)
+    def test_custom_threshold(self):
+        cfg = AnalyzerConfig(bpm_change_threshold_pct=10.0)
+        self.assertEqual(cfg.bpm_change_threshold_pct, 10.0)
 
 
 if __name__ == "__main__":

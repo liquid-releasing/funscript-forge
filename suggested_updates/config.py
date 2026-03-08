@@ -1,4 +1,4 @@
-"""TransformerConfig: all tunable parameters for the six-task transformer."""
+"""TransformerConfig: tunable parameters for the BPM-threshold transformer."""
 
 import dataclasses
 import json
@@ -7,31 +7,17 @@ from dataclasses import dataclass
 
 @dataclass
 class TransformerConfig:
-    # Task 1 — default mode
-    time_scale: float = 2.0
-    amplitude_scale: float = 2.0
-    lpf_default: float = 0.10
+    # BPM threshold: phrases below this are passed through unchanged;
+    # phrases at or above this receive the default amplitude transform.
+    bpm_threshold: float = 120.0
 
-    # Task 2 — performance mode
-    max_velocity: float = 0.32
-    reversal_soften: float = 0.62
-    height_blend: float = 0.75
-    compress_bottom: int = 15
-    compress_top: int = 92
-    lpf_performance: float = 0.16
-    timing_jitter_ms: int = 3
+    # Default transform (applied to high-BPM phrases)
+    amplitude_scale: float = 2.0   # position scaled around center (50)
+    lpf_default: float = 0.10      # low-pass filter strength for high-BPM phrases
 
-    # Task 3 — break mode
-    break_amplitude_reduce: float = 0.40
-    lpf_break: float = 0.30
-
-    # Task 5 — cycle-aware dynamics
-    cycle_dynamics_strength: float = 0.10
-    cycle_dynamics_center: int = 50
-
-    # Task 6 — beat-synced accents
-    beat_accent_radius_ms: int = 40
-    beat_accent_amount: int = 4
+    # Time scaling is applied globally (not per-phrase) to avoid timeline collisions.
+    # Set to 1.0 to disable.
+    time_scale: float = 1.0
 
     def to_dict(self) -> dict:
         return dataclasses.asdict(self)

@@ -15,13 +15,14 @@ from suggested_updates.config import TransformerConfig
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "sample.funscript")
 
 
-def _make_transformer_with_assessment():
+def _make_transformer(bpm_threshold=120.0):
     """Helper: return a transformer pre-loaded with fixture + assessment."""
     analyzer = FunscriptAnalyzer()
     analyzer.load(FIXTURE)
     assessment = analyzer.analyze()
 
-    transformer = FunscriptTransformer()
+    cfg = TransformerConfig(bpm_threshold=bpm_threshold)
+    transformer = FunscriptTransformer(cfg)
     transformer.load_funscript(FIXTURE)
     transformer.load_assessment(assessment)
     return transformer
@@ -29,48 +30,38 @@ def _make_transformer_with_assessment():
 
 class TestFunscriptTransformer(unittest.TestCase):
     def test_load_funscript(self):
-        t = FunscriptTransformer()
-        t.load_funscript(FIXTURE)
+        t = _make_transformer()
         self.assertGreater(len(t._actions), 0)
 
-    def test_load_assessment_populates_windows(self):
-        t = _make_transformer_with_assessment()
-        total = len(t._auto_perf) + len(t._auto_break) + len(t._auto_default)
-        self.assertGreater(total, 0)
+    def test_load_assessment_populates_phrases(self):
+        t = _make_transformer()
+        self.assertGreater(len(t._phrases), 0)
 
-    def test_merge_windows_returns_dict(self):
-        t = _make_transformer_with_assessment()
-        merged = t.merge_windows()
-        self.assertIn("performance", merged)
-        self.assertIn("break", merged)
-        self.assertIn("default", merged)
-        self.assertIn("raw", merged)
+    def test_overall_bpm_set(self):
+        t = _make_transformer()
+        self.assertGreater(t._overall_bpm, 0.0)
 
     def test_transform_returns_actions(self):
-        t = _make_transformer_with_assessment()
-        t.merge_windows()
+        t = _make_transformer()
         actions = t.transform()
         self.assertIsInstance(actions, list)
         self.assertGreater(len(actions), 0)
 
     def test_transform_output_positions_in_range(self):
-        t = _make_transformer_with_assessment()
-        t.merge_windows()
+        t = _make_transformer()
         actions = t.transform()
         for a in actions:
             self.assertGreaterEqual(a["pos"], 0)
             self.assertLessEqual(a["pos"], 100)
 
     def test_transform_timestamps_non_negative(self):
-        t = _make_transformer_with_assessment()
-        t.merge_windows()
+        t = _make_transformer()
         actions = t.transform()
         for a in actions:
             self.assertGreaterEqual(a["at"], 0)
 
     def test_save_produces_valid_funscript(self):
-        t = _make_transformer_with_assessment()
-        t.merge_windows()
+        t = _make_transformer()
         t.transform()
 
         with tempfile.NamedTemporaryFile(suffix=".funscript", delete=False, mode="w") as f:
@@ -85,68 +76,59 @@ class TestFunscriptTransformer(unittest.TestCase):
             os.unlink(tmp_path)
 
     def test_get_log_returns_list(self):
-        t = _make_transformer_with_assessment()
-        t.merge_windows()
+        t = _make_transformer()
         t.transform()
         log = t.get_log()
         self.assertIsInstance(log, list)
         self.assertGreater(len(log), 0)
 
+    def test_very_high_threshold_passes_all_through(self):
+        """With threshold above any phrase BPM, all positions should match original."""
+        t = _make_transformer(bpm_threshold=99999.0)
+        import copy
+        orig = copy.deepcopy(t._original_actions)
+        t.transform()
+        for i, a in enumerate(t._actions):
+            self.assertEqual(a["pos"], orig[i]["pos"])
 
-class TestManualOverrides(unittest.TestCase):
-    def test_manual_override_removes_overlapping_auto(self):
-        t = _make_transformer_with_assessment()
+    def test_zero_threshold_transforms_all(self):
+        """With threshold=0, all phrases qualify for transform; no action is pass-through."""
+        t = _make_transformer(bpm_threshold=0.0)
+        t.transform()
+        log = " ".join(t.get_log())
+        self.assertIn("0 actions passed through", log)
 
-        # Inject a synthetic auto performance window
-        t._auto_perf = [(1000, 3000)]
+    def test_time_scale_applied_globally(self):
+        """time_scale != 1.0 should scale all timestamps."""
+        import copy
+        analyzer = FunscriptAnalyzer()
+        analyzer.load(FIXTURE)
+        assessment = analyzer.analyze()
 
-        # Create a manual window overlapping the auto one
-        with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w") as f:
-            json.dump([{"start": "00:00:01.500", "end": "00:00:02.500", "label": "manual"}], f)
-            tmp_path = f.name
+        cfg = TransformerConfig(bpm_threshold=99999.0, time_scale=2.0)
+        t = FunscriptTransformer(cfg)
+        t.load_funscript(FIXTURE)
+        t.load_assessment(assessment)
+        orig = copy.deepcopy(t._original_actions)
+        t.transform()
 
-        try:
-            t.load_manual_overrides(perf_path=tmp_path)
-            merged = t.merge_windows()
-            # Auto window overlapping manual should be removed
-            # Final perf windows should only contain the manual one
-            self.assertEqual(len(merged["performance"]), 1)
-            self.assertEqual(merged["performance"][0]["start_ms"], 1500)
-        finally:
-            os.unlink(tmp_path)
-
-    def test_non_overlapping_auto_windows_preserved(self):
-        t = _make_transformer_with_assessment()
-
-        # Two auto windows, one overlapping manual, one not
-        t._auto_perf = [(0, 500), (5000, 6000)]
-
-        with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w") as f:
-            json.dump([{"start": "00:00:00.100", "end": "00:00:00.400", "label": "manual"}], f)
-            tmp_path = f.name
-
-        try:
-            t.load_manual_overrides(perf_path=tmp_path)
-            merged = t.merge_windows()
-            # manual (1) + non-overlapping auto (1) = 2 total
-            self.assertEqual(len(merged["performance"]), 2)
-        finally:
-            os.unlink(tmp_path)
+        for i, a in enumerate(t._actions):
+            self.assertEqual(a["at"], orig[i]["at"] * 2)
 
 
 class TestTransformerConfig(unittest.TestCase):
     def test_default_config(self):
         cfg = TransformerConfig()
-        self.assertEqual(cfg.time_scale, 2.0)
+        self.assertEqual(cfg.bpm_threshold, 120.0)
         self.assertEqual(cfg.amplitude_scale, 2.0)
-        self.assertEqual(cfg.beat_accent_radius_ms, 40)
+        self.assertEqual(cfg.time_scale, 1.0)
 
     def test_config_round_trip(self):
-        cfg = TransformerConfig(time_scale=1.5, beat_accent_amount=6)
+        cfg = TransformerConfig(bpm_threshold=90.0, amplitude_scale=1.5)
         d = cfg.to_dict()
         restored = TransformerConfig.from_dict(d)
-        self.assertEqual(restored.time_scale, 1.5)
-        self.assertEqual(restored.beat_accent_amount, 6)
+        self.assertEqual(restored.bpm_threshold, 90.0)
+        self.assertEqual(restored.amplitude_scale, 1.5)
 
     def test_config_save_load(self):
         cfg = TransformerConfig(lpf_default=0.25)
@@ -160,8 +142,8 @@ class TestTransformerConfig(unittest.TestCase):
             os.unlink(tmp_path)
 
     def test_from_dict_ignores_unknown_keys(self):
-        cfg = TransformerConfig.from_dict({"time_scale": 3.0, "unknown_key": "ignored"})
-        self.assertEqual(cfg.time_scale, 3.0)
+        cfg = TransformerConfig.from_dict({"bpm_threshold": 80.0, "unknown_key": "ignored"})
+        self.assertEqual(cfg.bpm_threshold, 80.0)
 
 
 if __name__ == "__main__":
