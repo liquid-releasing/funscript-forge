@@ -28,6 +28,8 @@ import json
 import os
 from typing import Any, Dict, List, Optional
 
+import streamlit as st  # needed at module level for @st.fragment
+
 
 # ------------------------------------------------------------------
 # Public entry point
@@ -35,14 +37,10 @@ from typing import Any, Dict, List, Optional
 
 def render(
     phrases: list,
-    original_actions: list,
     view_state,
     duration_ms: int,
     bpm_threshold: float = 120.0,
 ) -> None:
-    import streamlit as st
-    from suggested_updates.phrase_transforms import TRANSFORM_CATALOG, suggest_transform
-
     if not view_state.has_selection():
         return
 
@@ -60,16 +58,47 @@ def render(
 
     st.divider()
 
-    # ------------------------------------------------------------------
-    # Fixed viewport: all phrase views share the same time-scale width
-    # so BPM and velocity are visually comparable.
-    # ------------------------------------------------------------------
     win_start, win_end = _fixed_viewport(phrases, phrase, duration_ms)
+    funscript_path = st.session_state.project.funscript_path
+
+    _detail_fragment(
+        funscript_path=funscript_path,
+        phrases=phrases,
+        phrase_idx=phrase_idx,
+        win_start=win_start,
+        win_end=win_end,
+        bpm_threshold=bpm_threshold,
+        duration_ms=duration_ms,
+    )
+
+
+# ------------------------------------------------------------------
+# Detail fragment — chart + controls isolated so transform slider
+# interactions rerun only this section, not the whole app.
+# Nav/save/cancel use st.rerun(scope="app") for mode switches.
+# ------------------------------------------------------------------
+
+@st.fragment
+def _detail_fragment(
+    funscript_path: str,
+    phrases: list,
+    phrase_idx: int,
+    win_start: int,
+    win_end: int,
+    bpm_threshold: float,
+    duration_ms: int,
+) -> None:
+    from suggested_updates.phrase_transforms import TRANSFORM_CATALOG, suggest_transform
+
+    view_state = st.session_state.view_state
+    phrase     = phrases[phrase_idx]
+
+    with open(funscript_path) as f:
+        original_actions = json.load(f)["actions"]
 
     # ------------------------------------------------------------------
     # Resolve transform — read directly from the selectbox/slider session
     # state keys so the preview is always in sync (not one rerun behind).
-    # Default to passthrough so the user starts with no change applied.
     # ------------------------------------------------------------------
     catalog_keys   = list(TRANSFORM_CATALOG.keys())
     catalog_labels = [TRANSFORM_CATALOG[k].name for k in catalog_keys]
@@ -83,7 +112,6 @@ def render(
 
     spec = TRANSFORM_CATALOG.get(transform_key, TRANSFORM_CATALOG["passthrough"])
 
-    # Read param values immediately from slider session state
     param_values: Dict[str, Any] = {}
     for pk, param in spec.params.items():
         sv = st.session_state.get(f"param_{phrase_idx}_{pk}")
@@ -169,7 +197,6 @@ def _render_chart(
     view_state,
     chart_key: str,
 ) -> None:
-    import streamlit as st
     from visualizations.chart_data import (
         compute_chart_data, compute_annotation_bands, slice_bands,
     )
@@ -242,7 +269,6 @@ def _render_chart(
 
 def _render_preview_stats(preview_actions: list, phrase: dict) -> None:
     """Show a compact position-stats row for the preview phrase slice."""
-    import streamlit as st
     import pandas as pd
 
     phrase_start = phrase["start_ms"]
@@ -296,7 +322,6 @@ def _apply_transform_to_window(
 # ------------------------------------------------------------------
 
 def _render_transform_controls(phrase: dict, bpm_threshold: float, phrase_idx: int) -> None:
-    import streamlit as st
     from suggested_updates.phrase_transforms import TRANSFORM_CATALOG, suggest_transform
 
     suggested_key = suggest_transform(phrase, bpm_threshold)
@@ -355,8 +380,6 @@ def _render_transform_controls(phrase: dict, bpm_threshold: float, phrase_idx: i
 # ------------------------------------------------------------------
 
 def _render_nav_buttons(phrases: list, phrase_idx: int, view_state, duration_ms: int) -> None:
-    import streamlit as st
-
     n = len(phrases)
     st.caption(f"P{phrase_idx + 1} of {n}")
 
@@ -366,14 +389,14 @@ def _render_nav_buttons(phrases: list, phrase_idx: int, view_state, duration_ms:
                      disabled=(phrase_idx == 0),
                      width="stretch"):
             _select_and_zoom(phrases[phrase_idx - 1], view_state, duration_ms)
-            st.rerun()
+            st.rerun(scope="app")   # full rerun → switches to adjacent phrase
 
     with col_n:
         if st.button("Next ⏭", key="pd_phrase_next",
                      disabled=(phrase_idx >= n - 1),
                      width="stretch"):
             _select_and_zoom(phrases[phrase_idx + 1], view_state, duration_ms)
-            st.rerun()
+            st.rerun(scope="app")   # full rerun → switches to adjacent phrase
 
 
 # ------------------------------------------------------------------
@@ -384,8 +407,6 @@ def _render_save_cancel(phrases: list, original_actions: list, view_state) -> No
     """Save applies all stored transforms and downloads the result.
     Cancel discards all stored transforms and returns to phrase selector.
     """
-    import streamlit as st
-
     st.divider()
 
     edited_actions = _build_edited_actions(phrases, original_actions)
@@ -434,18 +455,16 @@ def _return_to_selector(view_state) -> None:
     so Streamlit discards the old chart (and its stale browser-side selection
     state) rather than reusing it.
     """
-    import streamlit as st
     _clear_transform_state()
     view_state.clear_selection()
     st.session_state.phrase_sel_chart_instance = (
         st.session_state.get("phrase_sel_chart_instance", 0) + 1
     )
-    st.rerun()
+    st.rerun(scope="app")   # full rerun → returns to phrase selector mode
 
 
 def _build_edited_actions(phrases: list, original_actions: list) -> list:
     """Apply all stored phrase transforms to original_actions."""
-    import streamlit as st
     from suggested_updates.phrase_transforms import TRANSFORM_CATALOG
 
     result = copy.deepcopy(original_actions)
@@ -471,7 +490,6 @@ def _build_edited_actions(phrases: list, original_actions: list) -> list:
 
 
 def _clear_transform_state() -> None:
-    import streamlit as st
     for k in [k for k in st.session_state if k.startswith("phrase_transform_")]:
         del st.session_state[k]
 
