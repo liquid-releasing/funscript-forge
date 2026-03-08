@@ -1,16 +1,22 @@
 # assessment
 
-Structural analysis of a funscript — Step 1 of the four-step workflow.
+Structural analysis of a funscript — Step 1 of the pipeline.
 
-The `FunscriptAnalyzer` class processes a `.funscript` file and produces an
-`AssessmentResult` containing detected phases, cycles, patterns, phrases, beat
-windows, and auto mode windows. All timestamps are output in both milliseconds
-and human-readable `HH:MM:SS.mmm` format.
+The `FunscriptAnalyzer` processes a `.funscript` file and produces an
+`AssessmentResult` containing detected phases, cycles, patterns, phrases,
+and BPM transitions. All timestamps are output in both milliseconds and
+human-readable `HH:MM:SS.mmm` format.
 
 ## Pipeline
 
 ```text
 load() → analyze() → AssessmentResult → save()
+```
+
+Each stage feeds the next:
+
+```text
+actions → phases → cycles → patterns → phrases → bpm_transitions
 ```
 
 ## Usage
@@ -22,7 +28,7 @@ python cli.py assess path/to/input.funscript [--output assessment.json] [--confi
 ```
 
 If `--output` is omitted, the JSON is saved alongside the input file with an
-`_assessment.json` suffix.
+`.assessment.json` suffix.
 
 ### Programmatically
 
@@ -32,13 +38,13 @@ from assessment.analyzer import FunscriptAnalyzer, AnalyzerConfig
 analyzer = FunscriptAnalyzer()
 analyzer.load("path/to/input.funscript")
 result = analyzer.analyze()
-result.save("assessment.json")
+result.save("output/assessment.json")
 ```
 
 With a custom config:
 
 ```python
-config = AnalyzerConfig(performance_cycle_threshold=8, break_cycle_threshold=1)
+config = AnalyzerConfig(bpm_change_threshold_pct=30.0)
 analyzer = FunscriptAnalyzer(config=config)
 ```
 
@@ -49,54 +55,74 @@ analyzer = FunscriptAnalyzer(config=config)
 | Method | Description |
 | --- | --- |
 | `load(path)` | Load a `.funscript` file |
-| `analyze() -> AssessmentResult` | Run the full analysis pipeline |
+| `analyze() -> AssessmentResult` | Run the full analysis pipeline and return the result |
 
 ### `AnalyzerConfig`
 
 | Field | Default | Description |
 | --- | --- | --- |
-| `min_velocity` | `0.02` | Minimum velocity to count as directional motion |
-| `min_phase_duration_ms` | `80` | Minimum phase length in ms |
-| `duration_tolerance` | `0.20` | Max fractional duration difference for similar cycles |
-| `velocity_tolerance` | `0.25` | Max fractional velocity difference for similar cycles |
-| `performance_cycle_threshold` | `5` | Phrases with >= this many cycles → performance window |
-| `break_cycle_threshold` | `2` | Phrases with <= this many cycles → break window |
+| `min_velocity` | `0.02` | Velocity threshold below which motion is treated as flat |
+| `min_phase_duration_ms` | `80` | Phases shorter than this are discarded |
+| `duration_tolerance` | `0.20` | Max fractional duration difference for two cycles to be considered similar |
+| `velocity_tolerance` | `0.25` | Max fractional velocity difference for cycle similarity |
+| `bpm_change_threshold_pct` | `40.0` | Minimum absolute BPM % change between consecutive phrases to flag a transition |
 
-## Analysis pipeline
+## Analysis pipeline stages
 
-### Phases
+### 1 — Phases
 
-Directional segments of continuous motion. Each phase is labeled `steady upward motion`,
-`steady downward motion`, or `low-motion plateau`. Both `start_ms`/`end_ms` and
-`start_ts`/`end_ts` are available.
+Contiguous segments of consistent directional motion, detected by sign
+changes in inter-action velocity. Each phase is labeled one of:
 
-### Cycles
+- `steady upward motion`
+- `steady downward motion`
+- `low-motion plateau`
 
-Structural groupings of phases where the direction does not consecutively repeat.
-Each cycle carries an `oscillation_count` (up-down pairs) used to compute per-cycle BPM.
+A phase is only emitted if its duration ≥ `min_phase_duration_ms`.
 
-### Patterns
+### 2 — Cycles
 
-Cycles that share the same direction sequence and similar duration are grouped into
-a pattern. Each pattern records its average duration and how many cycles matched.
+Phases are grouped into cycles, where **one cycle = one complete oscillation**
+(an up segment followed by a down segment, or vice-versa, optionally
+interrupted by flat segments). A new cycle is opened as soon as the
+accumulating phases contain both active directions; the next direction change
+closes the current cycle and starts a fresh one.
 
-### Phrases
+Each cycle carries:
 
-Runs of consecutive cycles that all belong to the same pattern. Each phrase carries
-an `oscillation_count` (sum of its cycles) and a computed `bpm` property.
+- `label` — direction sequence, e.g. `"up → down"` or `"up → flat → down"`
+- `oscillation_count` — number of up-down pairs within the cycle
+- `bpm` — computed as `60 000 / duration_ms × oscillation_count`
 
-### Auto mode windows
+### 3 — Patterns
 
-Phrases are classified into three buckets based on cycle count:
+Cycles with the same direction-sequence label **and** similar duration
+(within `duration_tolerance`) are grouped into a pattern. Each pattern
+records:
 
-| Bucket | Condition |
-| --- | --- |
-| `performance` | `cycle_count >= performance_cycle_threshold` |
-| `default` | between the two thresholds |
-| `break` | `cycle_count <= break_cycle_threshold` |
+- `pattern_label` — the shared direction sequence
+- `avg_duration_ms` — mean cycle duration
+- `count` — number of matching cycles
 
-These windows are the starting point for Step 4 (transform). Manual override windows
-take priority over auto windows on overlap.
+### 4 — Phrases
+
+Consecutive cycles that all belong to the same pattern are merged into a
+phrase. Each phrase carries a `bpm` property (oscillations per minute over
+the phrase window) and a `cycle_count`.
+
+### 5 — BPM transitions
+
+Consecutive phrase pairs where BPM changes by ≥ `bpm_change_threshold_pct`
+percent are flagged as BPM transitions. These mark structural tempo shifts
+and are the primary signal used by the UI to suggest work-item boundaries.
+
+## Real-world results (test funscripts)
+
+| File | Duration | Actions | Phases | Cycles | Patterns | Phrases | BPM transitions |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `Timeline1` | 3:13 | 822 | 791 | 381 | 11 | 34 | 30 |
+| `LongandCut-hdr` | 10:16 | 2 586 | 2 548 | 1 262 | 13 | 32 | 28 |
+| `VictoriaOaks_stingy` | 1:33:12 | 23 710 | 23 708 | 11 854 | 1 | 1 | 0 (uniform tempo) |
 
 ## Assessment JSON output
 
@@ -105,28 +131,55 @@ take priority over auto windows on overlap.
   "meta": {
     "source_file": "input.funscript",
     "analyzed_at": "2025-01-01T12:00:00",
-    "duration_ms": 360000,
-    "duration_ts": "00:06:00.000",
-    "action_count": 1200,
-    "bpm": 142.5
+    "duration_ms": 193472,
+    "duration_ts": "00:03:13.472",
+    "action_count": 822,
+    "bpm": 119.86
   },
   "phases": [
-    { "start_ms": 0, "start_ts": "00:00:00.000", "end_ms": 250, "end_ts": "00:00:00.250", "label": "steady upward motion" }
+    {
+      "start_ms": 85, "start_ts": "00:00:00.085",
+      "end_ms": 320,  "end_ts": "00:00:00.320",
+      "label": "steady upward motion"
+    }
   ],
   "cycles": [
-    { "start_ms": 0, "start_ts": "00:00:00.000", "end_ms": 500, "end_ts": "00:00:00.500", "label": "up → down", "oscillation_count": 1, "bpm": 120.0 }
+    {
+      "start_ms": 85,  "start_ts": "00:00:00.085",
+      "end_ms": 554,   "end_ts": "00:00:00.554",
+      "label": "up → down",
+      "oscillation_count": 1,
+      "bpm": 120.5
+    }
   ],
-  "patterns": [ ... ],
+  "patterns": [
+    {
+      "pattern_label": "up → down",
+      "avg_duration_ms": 472,
+      "count": 349,
+      "cycles": ["..."]
+    }
+  ],
   "phrases": [
-    { "start_ms": 0, "start_ts": "00:00:00.000", "end_ms": 5000, "end_ts": "00:00:05.000",
-      "pattern_label": "up → down", "cycle_count": 10, "oscillation_count": 10, "bpm": 120.0, "description": "10 cycles of pattern 'up → down'" }
+    {
+      "start_ms": 85,    "start_ts": "00:00:00.085",
+      "end_ms": 86506,   "end_ts": "00:01:26.506",
+      "pattern_label": "up → down",
+      "cycle_count": 183,
+      "oscillation_count": 183,
+      "bpm": 127.0,
+      "description": "183 cycles of pattern 'up → down'"
+    }
   ],
-  "beat_windows": [ ... ],
-  "auto_mode_windows": {
-    "performance": [ { "start_ms": 0, "start_ts": "...", "end_ms": 5000, "end_ts": "...", "label": "..." } ],
-    "break": [],
-    "default": []
-  }
+  "bpm_transitions": [
+    {
+      "at_ms": 86506,  "at_ts": "00:01:26.506",
+      "from_bpm": 127.0,
+      "to_bpm": 63.9,
+      "change_pct": -49.7,
+      "description": "BPM drops 49.7% at 00:01:26.506"
+    }
+  ]
 }
 ```
 
@@ -135,7 +188,7 @@ take priority over auto windows on overlap.
 ```python
 from models import AssessmentResult
 
-result = AssessmentResult.load("assessment.json")
-print(result.bpm)
-print(result.phases)
+result = AssessmentResult.load("output/assessment.json")
+print(result.bpm)          # global average BPM
+print(len(result.phrases)) # number of detected phrases
 ```
