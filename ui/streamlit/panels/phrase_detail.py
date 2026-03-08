@@ -7,12 +7,10 @@ Layout (when a phrase is selected)
   │  Original chart (fixed x-axis)  │  Transform   │
   ├─────────────────────────────────│  controls    │
   │  Preview — {Transform Name}     │              │
-  │  Preview chart (fixed x-axis)   │              │
-  │  *(not saved)*                  │              │
-  └─────────────────────────────────┴──────────────┘
-                                    ┌──────────────┐
-                                    │ ⏮ Prev Next ⏭│
-                                    │ 💾 Save ✕ Cancel│
+  │  Preview chart (fixed x-axis)   │  ⏮ Prev      │
+  │  [preview stats table]          │     Next ⏭   │
+  │  *(not saved)*                  │  💾 Save      │
+  └─────────────────────────────────│  ✕ Cancel    │
                                     └──────────────┘
 
 Both charts share the same fixed-width x-axis viewport (centered on the
@@ -21,9 +19,6 @@ BPM and velocity are visually comparable across all phrase views).
 
 Areas outside the selected phrase are dimmed with a semi-transparent overlay
 so context is visible but focus stays on the phrase being edited.
-
-Navigation and Save/Cancel buttons sit below the right column, aligned with
-the bottom of the preview chart.
 """
 
 from __future__ import annotations
@@ -74,6 +69,7 @@ def render(
     # ------------------------------------------------------------------
     # Resolve transform — read directly from the selectbox/slider session
     # state keys so the preview is always in sync (not one rerun behind).
+    # Default to passthrough so the user starts with no change applied.
     # ------------------------------------------------------------------
     catalog_keys   = list(TRANSFORM_CATALOG.keys())
     catalog_labels = [TRANSFORM_CATALOG[k].name for k in catalog_keys]
@@ -83,7 +79,7 @@ def render(
         transform_key = catalog_keys[catalog_labels.index(sel_label)]
     else:
         _stored = st.session_state.get(f"phrase_transform_{phrase_idx}", {})
-        transform_key = _stored.get("transform_key", suggest_transform(phrase, bpm_threshold))
+        transform_key = _stored.get("transform_key", "passthrough")
 
     spec = TRANSFORM_CATALOG.get(transform_key, TRANSFORM_CATALOG["passthrough"])
 
@@ -96,7 +92,7 @@ def render(
     preview_actions = _apply_transform_to_window(original_actions, phrase, spec, param_values)
 
     # ------------------------------------------------------------------
-    # Two-column layout: charts (left 3) | transform controls (right 1)
+    # Two-column layout: charts (left 3) | controls + nav + save (right 1)
     # ------------------------------------------------------------------
     col_charts, col_right = st.columns([3, 1])
 
@@ -122,16 +118,13 @@ def render(
             view_state=view_state,
             chart_key=f"detail_prev_{phrase_idx}_{win_start}_{transform_key}",
         )
+        _render_preview_stats(preview_actions, phrase)
         st.caption("*(not saved)*")
 
     with col_right:
         _render_transform_controls(phrase, bpm_threshold, phrase_idx)
-
-    # ------------------------------------------------------------------
-    # Nav + Save/Cancel below charts, right-aligned with the right column
-    # ------------------------------------------------------------------
-    _, col_nav = st.columns([3, 1])
-    with col_nav:
+        st.write("")
+        st.write("")
         _render_nav_buttons(phrases, phrase_idx, view_state, duration_ms)
         st.write("")
         _render_save_cancel(phrases, original_actions, view_state)
@@ -142,15 +135,11 @@ def render(
 # ------------------------------------------------------------------
 
 def _fixed_viewport(phrases: list, phrase: dict, duration_ms: int):
-    """Return (win_start, win_end) identical width for all phrases.
-
-    Width = longest phrase + padding each side, so velocity is comparable.
-    """
+    """Return (win_start, win_end) identical width for all phrases."""
     max_phrase_dur = max(
         (ph["end_ms"] - ph["start_ms"]) for ph in phrases
     ) if phrases else 60_000
 
-    # At least 10 s each side, or one-third of the longest phrase
     side_pad  = max(max_phrase_dur // 3, 10_000)
     half_win  = max_phrase_dur // 2 + side_pad
 
@@ -158,7 +147,6 @@ def _fixed_viewport(phrases: list, phrase: dict, duration_ms: int):
     win_start = max(0, center - half_win)
     win_end   = min(duration_ms, center + half_win)
 
-    # Keep the window the same total width when clamped at an edge
     total_width = 2 * half_win
     if win_start == 0:
         win_end   = min(duration_ms, total_width)
@@ -189,8 +177,8 @@ def _render_chart(
 
     sel_phrase = phrases[phrase_idx]
 
-    # Compute chart data only for the visible window — faster and gives
-    # window-relative velocity/amplitude normalization for better color detail.
+    # Only compute chart data for the visible window — faster and gives
+    # window-relative colour normalisation for better detail.
     window_actions = [a for a in actions if win_start <= a["at"] <= win_end]
     s = compute_chart_data(window_actions)
 
@@ -218,8 +206,7 @@ def _render_chart(
 
     fig = chart._build_figure(_LocalVS(), height=260)
 
-    # Explicitly lock the x-axis to the fixed window — overrides any
-    # auto-range that hit-target traces might trigger.
+    # Explicitly lock the x-axis — overrides any autorange from hit targets
     fig.update_xaxes(range=[win_start, win_end], autorange=False)
 
     # Dim areas outside the selected phrase
@@ -239,6 +226,35 @@ def _render_chart(
         pass
 
     st.plotly_chart(fig, key=chart_key, config={"displayModeBar": False})
+
+
+# ------------------------------------------------------------------
+# Preview stats table
+# ------------------------------------------------------------------
+
+def _render_preview_stats(preview_actions: list, phrase: dict) -> None:
+    """Show a compact position-stats row for the preview phrase slice."""
+    import streamlit as st
+    import pandas as pd
+
+    phrase_start = phrase["start_ms"]
+    phrase_end   = phrase["end_ms"]
+    slice_acts   = [a for a in preview_actions if phrase_start <= a["at"] <= phrase_end]
+    if not slice_acts:
+        return
+
+    positions = [a["pos"] for a in slice_acts]
+    lo, hi    = min(positions), max(positions)
+    mean_pos  = sum(positions) / len(positions)
+
+    row = {
+        "Min":     lo,
+        "Max":     hi,
+        "Range":   hi - lo,
+        "Mean":    f"{mean_pos:.1f}",
+        "Actions": len(slice_acts),
+    }
+    st.dataframe(pd.DataFrame([row]), hide_index=True, use_container_width=True)
 
 
 # ------------------------------------------------------------------
@@ -278,7 +294,9 @@ def _render_transform_controls(phrase: dict, bpm_threshold: float, phrase_idx: i
     suggested_key = suggest_transform(phrase, bpm_threshold)
     keys   = list(TRANSFORM_CATALOG.keys())
     labels = [TRANSFORM_CATALOG[k].name for k in keys]
-    suggested_idx = keys.index(suggested_key) if suggested_key in keys else 0
+
+    # Default to passthrough; show the rule-based suggestion as guidance only
+    passthrough_idx = keys.index("passthrough") if "passthrough" in keys else 0
 
     st.markdown("**Transform**")
     st.caption(f"Suggested: **{TRANSFORM_CATALOG[suggested_key].name}**")
@@ -286,7 +304,7 @@ def _render_transform_controls(phrase: dict, bpm_threshold: float, phrase_idx: i
     chosen_label = st.selectbox(
         "Select transform",
         options=labels,
-        index=suggested_idx,
+        index=passthrough_idx,
         key=f"transform_sel_{phrase_idx}",
         label_visibility="collapsed",
     )
