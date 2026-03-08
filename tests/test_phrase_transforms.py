@@ -348,5 +348,139 @@ class TestTransformParam(unittest.TestCase):
         self.assertEqual(p.help, "")
 
 
+# ---------------------------------------------------------------------------
+# README CLI examples — each example from pattern_catalog/README.md verified
+# as a programmatic equivalent so the docs stay honest.
+# ---------------------------------------------------------------------------
+
+class TestReadmeExamples(unittest.TestCase):
+    """Programmatic equivalents of the CLI examples in pattern_catalog/README.md.
+
+    These do not call the CLI; they exercise the same catalog calls that the
+    phrase-transform command makes internally so that any breakage surfaces here
+    before it affects the docs or the UI.
+    """
+
+    def _phrase_actions(self):
+        """Realistic-ish phrase: alternating low/high positions."""
+        return _actions([10, 90, 10, 90, 10, 90, 10, 90])
+
+    # ------------------------------------------------------------------
+    # smooth — apply to phrases 4 and 5 (strength=0.25)
+    # ------------------------------------------------------------------
+    def test_smooth_strength_0_25(self):
+        """README: --transform smooth --phrase 4 --phrase 5 --param strength=0.25"""
+        actions = self._phrase_actions()
+        result = TRANSFORM_CATALOG["smooth"].apply(actions, {"strength": 0.25})
+        self.assertEqual(len(result), len(actions))
+        # Smoothing should reduce the peak-to-trough swing
+        orig_range = max(a["pos"] for a in actions) - min(a["pos"] for a in actions)
+        res_range  = max(a["pos"] for a in result)  - min(a["pos"] for a in result)
+        self.assertLessEqual(res_range, orig_range)
+
+    # ------------------------------------------------------------------
+    # normalize — all phrases, default full range
+    # ------------------------------------------------------------------
+    def test_normalize_all_default_range(self):
+        """README: --transform normalize --all"""
+        actions = _actions([30, 40, 50, 60, 70])
+        result = TRANSFORM_CATALOG["normalize"].apply(actions, {"target_lo": 0, "target_hi": 100})
+        positions = [a["pos"] for a in result]
+        self.assertEqual(min(positions), 0)
+        self.assertEqual(max(positions), 100)
+
+    # ------------------------------------------------------------------
+    # boost_contrast — single phrase, strength=0.8
+    # ------------------------------------------------------------------
+    def test_boost_contrast_strength_0_8(self):
+        """README: --transform boost_contrast --phrase 2 --param strength=0.8"""
+        high = _actions([80])
+        low  = _actions([20])
+        result_high = TRANSFORM_CATALOG["boost_contrast"].apply(high, {"strength": 0.8})
+        result_low  = TRANSFORM_CATALOG["boost_contrast"].apply(low,  {"strength": 0.8})
+        self.assertGreater(result_high[0]["pos"], 80)
+        self.assertLess(result_low[0]["pos"], 20)
+
+    # ------------------------------------------------------------------
+    # amplitude_scale — all phrases, scale=0.7 (gentler output)
+    # ------------------------------------------------------------------
+    def test_amplitude_scale_down(self):
+        """README: --transform amplitude_scale --all --param scale=0.7"""
+        actions = _actions([20, 80])  # span = 60 around midpoint 50
+        result = TRANSFORM_CATALOG["amplitude_scale"].apply(actions, {"scale": 0.7})
+        orig_range = 80 - 20
+        res_range  = result[1]["pos"] - result[0]["pos"]
+        # Scale <1 should compress stroke depth
+        self.assertLess(res_range, orig_range)
+
+    # ------------------------------------------------------------------
+    # invert — phrase 1 (fix phase-inverted section)
+    # ------------------------------------------------------------------
+    def test_invert_phrase(self):
+        """README: --transform invert --phrase 1"""
+        actions = _actions([10, 90, 10, 90])
+        result = TRANSFORM_CATALOG["invert"].apply(actions)
+        self.assertEqual([a["pos"] for a in result], [90, 10, 90, 10])
+
+    # ------------------------------------------------------------------
+    # suggest — auto-pick per phrase (bpm_threshold=120)
+    # ------------------------------------------------------------------
+    def test_suggest_high_bpm_wide_amp(self):
+        """README: --suggest --bpm-threshold 120  (high BPM, wide amp → amplitude_scale)"""
+        self.assertEqual(suggest_transform(_PHRASE_HIGH_BPM, 120.0), "amplitude_scale")
+
+    def test_suggest_low_bpm(self):
+        """README: --suggest --bpm-threshold 120  (low BPM → passthrough)"""
+        self.assertEqual(suggest_transform(_PHRASE_LOW_BPM, 120.0), "passthrough")
+
+    def test_suggest_transition(self):
+        """README: --suggest  (transition phrase → smooth)"""
+        self.assertEqual(suggest_transform(_PHRASE_TRANS, 120.0), "smooth")
+
+    def test_suggest_narrow_amp(self):
+        """README: --suggest  (high BPM, narrow amp → normalize)"""
+        self.assertEqual(suggest_transform(_PHRASE_NARROW, 120.0), "normalize")
+
+    # ------------------------------------------------------------------
+    # clamp_upper / clamp_lower (documented in catalog table)
+    # ------------------------------------------------------------------
+    def test_clamp_upper_all_positions_in_upper_half(self):
+        """README catalog: clamp_upper keeps motion in the 50-100 zone."""
+        actions = _actions([0, 25, 50, 75, 100])
+        result = TRANSFORM_CATALOG["clamp_upper"].apply(
+            actions, {"range_lo": 50, "range_hi": 100}
+        )
+        for a in result:
+            self.assertGreaterEqual(a["pos"], 50)
+
+    def test_clamp_lower_all_positions_in_lower_half(self):
+        """README catalog: clamp_lower keeps motion in the 0-50 zone."""
+        actions = _actions([0, 25, 50, 75, 100])
+        result = TRANSFORM_CATALOG["clamp_lower"].apply(
+            actions, {"range_lo": 0, "range_hi": 50}
+        )
+        for a in result:
+            self.assertLessEqual(a["pos"], 50)
+
+    # ------------------------------------------------------------------
+    # Param override round-trip (--param key=value)
+    # ------------------------------------------------------------------
+    def test_param_override_scale(self):
+        """--param scale=1.0 on amplitude_scale should be identity."""
+        actions = _actions([20, 50, 80])
+        result = TRANSFORM_CATALOG["amplitude_scale"].apply(actions, {"scale": 1.0})
+        self.assertEqual([a["pos"] for a in result], [20, 50, 80])
+
+    def test_param_override_target_range(self):
+        """--param target_lo=20 target_hi=80 on normalize."""
+        actions = _actions([0, 100])
+        result = TRANSFORM_CATALOG["normalize"].apply(
+            actions, {"target_lo": 20, "target_hi": 80}
+        )
+        positions = [a["pos"] for a in result]
+        self.assertEqual(min(positions), 20)
+        self.assertEqual(max(positions), 80)
+
+
 if __name__ == "__main__":
     unittest.main()
