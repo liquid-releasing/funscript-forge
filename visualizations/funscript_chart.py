@@ -147,6 +147,15 @@ class FunscriptChart:
                 line_width=2, line_color=border,
                 layer="below",
             )
+            if band.name:
+                fig.add_annotation(
+                    x=band.start_ms, y=97,
+                    text=band.name,
+                    showarrow=False,
+                    xanchor="left", yanchor="top",
+                    font=dict(size=11, color=border),
+                    bgcolor="rgba(0,0,0,0)",
+                )
 
         # --- Invisible phrase hit targets (allow clicking anywhere inside a phrase box) ---
         # Place a grid of transparent markers across each phrase so any click inside

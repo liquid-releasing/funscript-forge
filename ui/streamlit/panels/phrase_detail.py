@@ -284,6 +284,14 @@ def _render_chart(
         line_width=2, line_color="rgba(255,220,50,1.0)",
         layer="below",
     )
+    fig.add_annotation(
+        x=sel_phrase["start_ms"], y=97,
+        text=f"P{phrase_idx + 1}",
+        showarrow=False,
+        xanchor="left", yanchor="top",
+        font=dict(size=11, color="rgba(255,220,50,1.0)"),
+        bgcolor="rgba(0,0,0,0)",
+    )
 
     # Lock x-axis to the fixed window (no autorange)
     fig.update_xaxes(range=[win_start, win_end], autorange=False)

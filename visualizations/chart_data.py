@@ -98,6 +98,7 @@ class AnnotationBand:
     label: str
     color: str
     row: int = 0
+    name: str = ""   # short display label, e.g. "P1" for phrase boxes
 
 
 # ------------------------------------------------------------------
@@ -187,13 +188,14 @@ def compute_annotation_bands(assessment_dict: dict) -> List[AnnotationBand]:
                 row=row_map["pattern"],
             ))
 
-    for ph in assessment_dict.get("phrases", []):
+    for i, ph in enumerate(assessment_dict.get("phrases", [])):
         bands.append(AnnotationBand(
             kind="phrase",
             start_ms=ph["start_ms"], end_ms=ph["end_ms"],
             label=f"Phrase ({ph.get('bpm', 0):.0f} BPM): {ph.get('pattern_label', '')}",
             color=ANNOTATION_COLORS["phrase"],
             row=row_map["phrase"],
+            name=f"P{i + 1}",
         ))
 
     for tr in assessment_dict.get("bpm_transitions", []):
