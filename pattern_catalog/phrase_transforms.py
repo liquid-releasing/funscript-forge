@@ -54,11 +54,16 @@ class PhraseTransform:
     name:        Human-readable display name.
     description: One-sentence explanation of what the transform does.
     params:      Dict of parameter name → TransformParam descriptor.
+    structural:  If True, the transform may return a different number of
+                 actions with different timestamps (not just modified pos).
+                 Callers must replace the phrase slice rather than patching
+                 positions in-place.
     """
     key: str
     name: str
     description: str
     params: Dict[str, TransformParam] = field(default_factory=dict)
+    structural: bool = False
 
     def apply(self, actions: list, param_values: Optional[Dict[str, Any]] = None) -> list:
         """Return a new action list with the transform applied.
@@ -164,6 +169,129 @@ class _BoostEnds(PhraseTransform):
         return actions
 
 
+class _Shift(PhraseTransform):
+    """Translate all positions by a fixed offset, clamping to 0–100.
+
+    Amplitude span is preserved unless the shifted range hits a boundary.
+    Use a positive offset to shift motion upward (more intense), negative
+    to shift downward (gentler).
+    """
+    def _transform(self, actions, p):
+        offset = p["offset"]
+        for a in actions:
+            a["pos"] = max(0, min(100, int(a["pos"] + offset)))
+        return actions
+
+
+class _Recenter(PhraseTransform):
+    """Shift all positions so that the phrase midpoint lands at *target_center*.
+
+    The midpoint is computed as (min + max) / 2 of the phrase.  All positions
+    are translated by the same amount so the amplitude span is unchanged,
+    clamped to 0–100 if the shifted range would exceed the boundaries.
+    """
+    def _transform(self, actions, p):
+        if not actions:
+            return actions
+        target = p["target_center"]
+        lo = min(a["pos"] for a in actions)
+        hi = max(a["pos"] for a in actions)
+        current_center = (lo + hi) / 2.0
+        offset = target - current_center
+        for a in actions:
+            a["pos"] = max(0, min(100, int(round(a["pos"] + offset))))
+        return actions
+
+
+# ------------------------------------------------------------------
+# Helpers for structural transforms
+# ------------------------------------------------------------------
+
+def _find_extrema(actions: list, min_prominence: int = 10) -> list:
+    """Return indices of local peaks and troughs in *actions*.
+
+    Always includes index 0 and len(actions)-1 so phrase boundaries are
+    preserved.  A point qualifies only if it differs from both neighbours
+    by at least *min_prominence* (filters noise).
+    """
+    n = len(actions)
+    if n < 3:
+        return list(range(n))
+
+    indices = [0]
+    for i in range(1, n - 1):
+        prev_pos = actions[i - 1]["pos"]
+        curr_pos = actions[i]["pos"]
+        next_pos = actions[i + 1]["pos"]
+        is_peak   = curr_pos >= prev_pos and curr_pos >= next_pos
+        is_trough = curr_pos <= prev_pos and curr_pos <= next_pos
+        if is_peak or is_trough:
+            prominence = min(abs(curr_pos - prev_pos), abs(curr_pos - next_pos))
+            if prominence >= min_prominence:
+                # Skip flat plateaux: don't add if same pos as previous extremum
+                if actions[indices[-1]]["pos"] != curr_pos:
+                    indices.append(i)
+    if indices[-1] != n - 1:
+        indices.append(n - 1)
+    return indices
+
+
+class _HalveTempo(PhraseTransform):
+    """Halve the BPM by keeping every other stroke cycle.
+
+    Algorithm:
+    1. Detect local extrema (peaks / troughs).
+    2. Group as stroke pairs (beat-up + beat-down).
+    3. Keep every other pair, discard interleaved pairs.
+    4. Retime kept points evenly across the original phrase duration.
+    5. Optionally scale amplitude around midpoint (50).
+
+    Result: same phrase duration, same amplitude, ~half the BPM.
+    This is a *structural* transform — it returns fewer actions with
+    different timestamps, so callers must replace the phrase slice.
+    """
+
+    def _transform(self, actions, p):
+        if len(actions) < 4:
+            return actions  # too short to halve
+
+        amp_scale = p["amplitude_scale"]
+        extrema_idx = _find_extrema(actions, min_prominence=10)
+        extrema = [(actions[i]["at"], actions[i]["pos"]) for i in extrema_idx]
+
+        # Keep every other pair: keep [0,1], skip [2,3], keep [4,5], …
+        kept = []
+        i = 0
+        while i < len(extrema):
+            kept.append(extrema[i])
+            if i + 1 < len(extrema):
+                kept.append(extrema[i + 1])
+            i += 4  # stride 4 = keep pair, skip pair
+
+        # Always preserve last extremum so phrase ends at the right position
+        if kept[-1] != extrema[-1]:
+            kept.append(extrema[-1])
+
+        if len(kept) < 2:
+            return actions
+
+        # Retime evenly across original phrase duration
+        t_start  = actions[0]["at"]
+        t_end    = actions[-1]["at"]
+        duration = t_end - t_start
+        n = len(kept)
+
+        new_actions = []
+        for j, (_, pos) in enumerate(kept):
+            new_at = t_start + round(j / (n - 1) * duration) if n > 1 else t_start
+            if amp_scale != 1.0:
+                centered = pos - 50
+                pos = max(0, min(100, int(50 + centered * amp_scale)))
+            new_actions.append({"at": int(new_at), "pos": pos})
+
+        return new_actions
+
+
 # ------------------------------------------------------------------
 # Catalog
 # ------------------------------------------------------------------
@@ -246,6 +374,43 @@ TRANSFORM_CATALOG: Dict[str, PhraseTransform] = {
                     label="Strength", type="float", default=0.5,
                     min_val=0.1, max_val=2.0, step=0.1,
                     help="How hard positions are pushed toward the extremes.",
+                ),
+            },
+        ),
+        _Shift(
+            key="shift",
+            name="Shift",
+            description="Translate all positions by a fixed offset — moves the center up or down while keeping amplitude.",
+            params={
+                "offset": TransformParam(
+                    label="Offset", type="int", default=0,
+                    min_val=-50, max_val=50, step=5,
+                    help="Positive = shift upward (more intense), negative = shift downward (gentler).",
+                ),
+            },
+        ),
+        _Recenter(
+            key="recenter",
+            name="Recenter",
+            description="Shift all positions so the phrase midpoint lands at a target value — preserves amplitude span.",
+            params={
+                "target_center": TransformParam(
+                    label="Target center", type="int", default=50,
+                    min_val=0, max_val=100, step=5,
+                    help="Where the midpoint between the phrase's min and max should land (0–100).",
+                ),
+            },
+        ),
+        _HalveTempo(
+            key="halve_tempo",
+            name="Halve Tempo",
+            description="Keep every other stroke cycle to halve the BPM over the same phrase duration.",
+            structural=True,
+            params={
+                "amplitude_scale": TransformParam(
+                    label="Amplitude scale", type="float", default=1.0,
+                    min_val=0.1, max_val=3.0, step=0.1,
+                    help="Scale stroke depth around 50 after tempo reduction. 1.0 = unchanged.",
                 ),
             },
         ),

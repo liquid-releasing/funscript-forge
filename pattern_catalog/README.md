@@ -114,6 +114,9 @@ and is independent of the bulk pipeline transformer.
 | `clamp_lower` | Clamp Lower Half | Remaps all positions into the lower half (0–50) | Gentle or rest-style sections; reduces overall intensity |
 | `invert` | Invert | Flips positions around 50 (pos = 100 − pos) | Corrects a phrase that is phase-inverted relative to the rest of the script |
 | `boost_contrast` | Boost Contrast | Pushes positions toward 0 and 100, away from the midpoint | Flat-feeling phrases where peaks/troughs don't reach the extremes |
+| `shift` | Shift | Adds a fixed offset to every position (positive = up, negative = down), clamped to 0–100 — amplitude preserved unless a boundary is hit | Nudge the whole phrase up or down without changing stroke depth |
+| `recenter` | Recenter | Shifts all positions so the phrase midpoint lands at a target value — amplitude span unchanged | Reposition a phrase oscillating in the wrong zone, e.g. centre at 70 instead of 50 |
+| `halve_tempo` | Halve Tempo | Keeps every other stroke cycle (temporal decimation), retimed evenly over the same phrase duration — *structural* transform, returns fewer actions | Very fast phrases where you want half the BPM with the same amplitude and duration |
 
 ### CLI usage (`phrase-transform` command)
 
@@ -148,6 +151,29 @@ python cli.py phrase-transform input.funscript \
 python cli.py phrase-transform input.funscript \
     --assessment assessment.json \
     --transform invert --phrase 1
+
+# Shift phrase 2 upward by 20 (more intense zone, same amplitude)
+python cli.py phrase-transform input.funscript \
+    --assessment assessment.json \
+    --transform shift --phrase 2 \
+    --param offset=20
+
+# Recenter phrase 3 so its midpoint lands at 70 (upper-zone repositioning)
+python cli.py phrase-transform input.funscript \
+    --assessment assessment.json \
+    --transform recenter --phrase 3 \
+    --param target_center=70
+
+# Halve the tempo of a very fast phrase (keeps same duration and amplitude)
+python cli.py phrase-transform input.funscript \
+    --assessment assessment.json \
+    --transform halve_tempo --phrase 3
+
+# Halve tempo across all phrases, also compress amplitude slightly
+python cli.py phrase-transform input.funscript \
+    --assessment assessment.json \
+    --transform halve_tempo --all \
+    --param amplitude_scale=0.8
 
 # Let suggest_transform() pick the best transform per phrase automatically
 python cli.py phrase-transform input.funscript \
