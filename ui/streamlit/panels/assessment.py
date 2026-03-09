@@ -92,7 +92,6 @@ def _render_summary(summary: Dict[str, Any]) -> None:
 
 
 def _render_phrases_section(phrases: List[Dict], project: "Project") -> None:
-    from ui.common.work_items import ItemType, WorkItem
     from assessment.classifier import TAGS
     from utils import ms_to_timestamp
 
@@ -105,104 +104,41 @@ def _render_phrases_section(phrases: List[Dict], project: "Project") -> None:
     # -- Timeline diagram --
     _render_phrases_timeline(phrases)
 
-    # -- Build dataframe --
-    rows = []
+    # -- Per-row table with Focus button --
+    # Columns: #(narrow/nowrap) | Time | BPM | Dur | Description | Tags | Focus
+    col_widths = [0.5, 3.0, 1.0, 1.3, 3.0, 2.5, 1.8]
+    hcols = st.columns(col_widths)
+    for h, lbl in zip(hcols, ["#", "Time", "BPM", "Dur", "Description", "Tags", ""]):
+        h.caption(lbl)
+
     for i, ph in enumerate(phrases):
         bpm = ph.get("bpm", 0.0)
         dur_ms = ph["end_ms"] - ph["start_ms"]
         raw_tags = ph.get("tags", []) or []
-        tag_labels = ", ".join(
-            TAGS[t].label if t in TAGS else t for t in raw_tags
+        tag_labels = ", ".join(TAGS[t].label if t in TAGS else t for t in raw_tags)
+
+        start_ts = ph.get("start_ts", ms_to_timestamp(ph["start_ms"]))
+        end_ts   = ph.get("end_ts",   ms_to_timestamp(ph["end_ms"]))
+        time_str = f"{start_ts} → {end_ts}"
+
+        if raw_tags and raw_tags[0] in TAGS:
+            desc = TAGS[raw_tags[0]].description
+        else:
+            desc = (ph.get("pattern_label", "") or "").replace("->", "→")
+
+        rc = st.columns(col_widths)
+        rc[0].markdown(
+            f'<span style="white-space:nowrap">{i + 1}</span>',
+            unsafe_allow_html=True,
         )
-        rows.append({
-            "#": i + 1,
-            "start": ph.get("start_ts", ms_to_timestamp(ph["start_ms"])),
-            "end": ph.get("end_ts", ms_to_timestamp(ph["end_ms"])),
-            "BPM": round(bpm, 1),
-            "duration": ms_to_timestamp(max(0, dur_ms)),
-            "pattern": (ph.get("pattern_label", "") or "")[:35],
-            "tags": tag_labels,
-            "cycles": ph.get("cycle_count", ""),
-        })
-
-    df = pd.DataFrame(rows)
-
-    sel = st.dataframe(
-        df,
-        use_container_width=True,
-        hide_index=True,
-        on_select="rerun",
-        selection_mode="multi-row",
-        key="phrases_table_sel",
-    )
-    selected_rows: List[int] = (
-        sel.selection.rows if sel and hasattr(sel, "selection") else []
-    )
-    n_sel = len(selected_rows)
-
-    col_pe, col_ve, col_add = st.columns(3)
-
-    # ---- Edit in Pattern Editor ----
-    if col_pe.button(
-        "Edit in Pattern Editor",
-        disabled=(n_sel != 1),
-        key="phrases_btn_pe",
-    ):
-        ph = phrases[selected_rows[0]]
-        raw_tags = ph.get("tags", []) or []
-        if not raw_tags:
-            st.warning("This phrase has no behavioral tag.")
-        else:
-            tag = raw_tags[0]
-            # Find which instance among all phrases with this tag
-            inst_idx = 0
-            count = 0
-            for p in phrases:
-                if tag in (p.get("tags") or []):
-                    if p is ph:
-                        inst_idx = count
-                        break
-                    count += 1
-            st.session_state.pe_selected_label = tag
-            st.session_state.pe_selected_instance = inst_idx
-            st.toast("Switch to the Pattern Editor tab", icon="ℹ️")
-
-    # ---- View in Phrase Editor ----
-    if col_ve.button(
-        "View in Phrase Editor",
-        disabled=(n_sel != 1),
-        key="phrases_btn_ve",
-    ):
-        ph = phrases[selected_rows[0]]
-        st.session_state.view_state.set_zoom(ph["start_ms"], ph["end_ms"])
-        st.toast("Switch to the Phrase Editor tab", icon="ℹ️")
-
-    # ---- Add to Work Items ----
-    if col_add.button(
-        "Add to Work Items",
-        disabled=(n_sel == 0),
-        key="phrases_btn_add",
-    ):
-        existing_starts = {w.start_ms for w in project.work_items}
-        added = 0
-        for row_idx in selected_rows:
-            ph = phrases[row_idx]
-            if ph["start_ms"] in existing_starts:
-                continue
-            project.add_item(WorkItem(
-                start_ms=ph["start_ms"],
-                end_ms=ph["end_ms"],
-                item_type=ItemType.NEUTRAL,
-                label=(ph.get("pattern_label", "") or "")[:40],
-                bpm=ph.get("bpm", 0.0),
-                source="phrase",
-            ))
-            existing_starts.add(ph["start_ms"])
-            added += 1
-        if added:
-            st.success(f"Added {added} work item(s).")
-        else:
-            st.info("All selected phrases are already in the work items list.")
+        rc[1].write(time_str)
+        rc[2].write(f"{bpm:.1f}")
+        rc[3].write(ms_to_timestamp(max(0, dur_ms)))
+        rc[4].write(desc)
+        rc[5].write(tag_labels)
+        if rc[6].button("Focus", key=f"ph_focus_{i}"):
+            st.session_state.view_state.set_zoom(ph["start_ms"], ph["end_ms"])
+            st.toast("Switch to the Phrase Editor tab", icon="ℹ️")
 
 
 def _render_phrases_timeline(phrases: List[Dict]) -> None:
@@ -280,57 +216,37 @@ def _render_bpm_transitions_section(
     # -- Plotly step chart --
     _render_bpm_step_chart(phrases, transitions)
 
-    # -- Table --
+    # -- Per-row table with Focus button --
     if transitions:
-        rows = []
-        for t in transitions:
+        _bt_cols = [2.5, 1.8, 1.8, 2.0, 1.2, 1.8]
+        hcols = st.columns(_bt_cols)
+        for h, lbl in zip(hcols, ["At", "From BPM", "To BPM", "Change", "Dir", ""]):
+            h.caption(lbl)
+
+        for i, t in enumerate(transitions):
             direction = "▲" if t.get("change_pct", 0) > 0 else "▼"
-            rows.append({
-                "at": t.get("at_ts", ""),
-                "from BPM": round(t.get("from_bpm", 0), 1),
-                "to BPM": round(t.get("to_bpm", 0), 1),
-                "change": f"{abs(t.get('change_pct', 0)):.1f}%",
-                "direction": direction,
-            })
-        df = pd.DataFrame(rows)
-        sel = st.dataframe(
-            df,
-            use_container_width=True,
-            hide_index=True,
-            on_select="rerun",
-            selection_mode="single-row",
-            key="bpm_trans_table_sel",
-        )
-        selected_rows: List[int] = (
-            sel.selection.rows if sel and hasattr(sel, "selection") else []
-        )
+            rc = st.columns(_bt_cols)
+            rc[0].write(t.get("at_ts", ""))
+            rc[1].write(f"{t.get('from_bpm', 0):.1f}")
+            rc[2].write(f"{t.get('to_bpm', 0):.1f}")
+            rc[3].write(f"{abs(t.get('change_pct', 0)):.1f}%")
+            rc[4].write(direction)
+            if rc[5].button("Focus", key=f"bt_focus_{i}"):
+                at_ms = t.get("at_ms", 0)
+                surrounding = None
+                for ph in phrases:
+                    if ph["start_ms"] <= at_ms <= ph["end_ms"]:
+                        surrounding = ph
+                        break
+                if surrounding is None and phrases:
+                    surrounding = min(phrases, key=lambda p: abs(p["start_ms"] - at_ms))
+                if surrounding:
+                    st.session_state.view_state.set_zoom(
+                        surrounding["start_ms"], surrounding["end_ms"]
+                    )
+                st.toast("Switch to the Phrase Editor tab", icon="ℹ️")
     else:
         st.info("No significant BPM transitions detected — tempo is uniform throughout.")
-        selected_rows = []
-
-    n_sel = len(selected_rows)
-
-    if st.button(
-        "View in Phrase Editor",
-        disabled=(n_sel != 1),
-        key="bpm_trans_btn_ve",
-    ):
-        t = transitions[selected_rows[0]]
-        at_ms = t.get("at_ms", 0)
-        # Find the surrounding phrase
-        surrounding = None
-        for ph in phrases:
-            if ph["start_ms"] <= at_ms <= ph["end_ms"]:
-                surrounding = ph
-                break
-        if surrounding is None and phrases:
-            # Fall back to nearest phrase
-            surrounding = min(phrases, key=lambda p: abs(p["start_ms"] - at_ms))
-        if surrounding:
-            st.session_state.view_state.set_zoom(
-                surrounding["start_ms"], surrounding["end_ms"]
-            )
-        st.toast("Switch to the Phrase Editor tab", icon="ℹ️")
 
 
 def _render_bpm_step_chart(phrases: List[Dict], transitions: List[Dict]) -> None:
@@ -395,93 +311,68 @@ def _render_bpm_step_chart(phrases: List[Dict], transitions: List[Dict]) -> None
 
 
 def _render_patterns_section(patterns: List[Dict], phrases: List[Dict]) -> None:
-    from utils import ms_to_timestamp
+    from assessment.classifier import TAGS
 
-    st.subheader(f"Patterns  ({len(patterns)})")
+    st.subheader("Behavioral Patterns")
 
-    if not patterns:
-        st.write("No patterns detected.")
+    # Group phrases by behavioral tag
+    tag_phrases: Dict[str, List[dict]] = {}
+    for ph in phrases:
+        for tag in (ph.get("tags") or []):
+            tag_phrases.setdefault(tag, []).append(ph)
+
+    if not tag_phrases:
+        st.info("No behavioral patterns detected in this funscript.")
         return
 
-    sorted_pats = sorted(patterns, key=lambda p: p.get("count", 0), reverse=True)
+    sorted_tags = sorted(tag_phrases.keys(), key=lambda t: -len(tag_phrases[t]))
 
-    # -- Plotly horizontal bar chart --
-    labels = [(p.get("pattern_label", "") or "")[:40] for p in sorted_pats]
-    counts = [p.get("count", 0) for p in sorted_pats]
-    chart_height = max(100, len(sorted_pats) * 28 + 40)
+    # -- Chart: phrase count per behavioral tag --
+    labels = [TAGS[t].label if t in TAGS else t.title() for t in sorted_tags]
+    counts = [len(tag_phrases[t]) for t in sorted_tags]
+    colors = [TAGS[t].color if t in TAGS else "rgba(180,180,180,0.6)" for t in sorted_tags]
+    chart_height = max(100, len(sorted_tags) * 36 + 40)
 
     fig = go.Figure(go.Bar(
         x=counts,
         y=labels,
         orientation="h",
-        marker_color="#4a90d9",
-        hovertemplate="%{y}: %{x} cycles<extra></extra>",
+        marker=dict(color=colors, line=dict(width=0)),
+        hovertemplate="%{y}: %{x} phrases<extra></extra>",
     ))
     fig.update_layout(
         height=chart_height,
         margin=dict(l=10, r=10, t=10, b=10),
         paper_bgcolor=_BG,
         plot_bgcolor=_BG,
-        xaxis=dict(gridcolor=_GRID, zeroline=False, title="Cycles"),
+        xaxis=dict(gridcolor=_GRID, zeroline=False, title="Phrases"),
         yaxis=dict(gridcolor=_GRID, zeroline=False, autorange="reversed"),
         showlegend=False,
     )
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
-    # -- Table --
-    rows = []
-    for p in sorted_pats:
-        avg_dur = p.get("avg_duration_ms", 1)
-        avg_bpm = round(60_000 / max(1, avg_dur), 1)
-        from utils import ms_to_timestamp as _mtt
-        rows.append({
-            "pattern": (p.get("pattern_label", "") or "")[:50],
-            "cycles": p.get("count", 0),
-            "avg BPM": avg_bpm,
-            "avg duration": _mtt(int(avg_dur)),
-        })
-    df = pd.DataFrame(rows)
-    sel = st.dataframe(
-        df,
-        use_container_width=True,
-        hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-        key="patterns_table_sel",
-    )
-    selected_rows: List[int] = (
-        sel.selection.rows if sel and hasattr(sel, "selection") else []
-    )
-    n_sel = len(selected_rows)
+    # -- Per-row: label, description, phrase count, BPM range, Focus --
+    _bhv_cols = [2.0, 3.5, 1.0, 2.0, 1.8]
+    hcols = st.columns(_bhv_cols)
+    for h, lbl in zip(hcols, ["Tag", "Description", "Phrases", "BPM range", ""]):
+        h.caption(lbl)
 
-    if st.button(
-        "Edit in Pattern Editor",
-        disabled=(n_sel != 1),
-        key="patterns_btn_pe",
-    ):
-        pat = sorted_pats[selected_rows[0]]
-        pat_label = pat.get("pattern_label", "") or ""
-        # Find the most-common tag across phrases with this pattern_label
-        tag_counts: Dict[str, int] = {}
-        for ph in phrases:
-            if (ph.get("pattern_label", "") or "") == pat_label:
-                for tg in (ph.get("tags") or []):
-                    tag_counts[tg] = tag_counts.get(tg, 0) + 1
-        if not tag_counts:
-            st.warning("No behavioral tag found for this pattern.")
-        else:
-            top_tag = max(tag_counts, key=lambda k: tag_counts[k])
-            # Find which instance
-            inst_idx = 0
-            count = 0
-            for ph in phrases:
-                if top_tag in (ph.get("tags") or []) and (ph.get("pattern_label", "") or "") == pat_label:
-                    inst_idx = count
-                    break
-                if top_tag in (ph.get("tags") or []):
-                    count += 1
-            st.session_state.pe_selected_label = top_tag
-            st.session_state.pe_selected_instance = inst_idx
+    for i, tag in enumerate(sorted_tags):
+        meta = TAGS.get(tag)
+        phs  = tag_phrases[tag]
+        bpms = [p.get("bpm", 0) for p in phs if p.get("bpm", 0) > 0]
+        bpm_rng = (
+            f"{min(bpms):.0f} – {max(bpms):.0f}" if bpms else "—"
+        )
+
+        rc = st.columns(_bhv_cols)
+        rc[0].write(meta.label if meta else tag.title())
+        rc[1].write(meta.description if meta else "")
+        rc[2].write(len(phs))
+        rc[3].write(bpm_rng)
+        if rc[4].button("Focus", key=f"bhv_focus_{i}"):
+            st.session_state.pe_selected_label = tag
+            st.session_state.pe_selected_instance = 0
             st.toast("Switch to the Pattern Editor tab", icon="ℹ️")
 
 

@@ -84,7 +84,7 @@ def _render_funscript_section(project, phrases: List[dict], catalog) -> None:
         "Width = phrase duration."
     )
 
-    # --- Tag summary table + sample chart ---
+    # --- Tag details table with per-row Sample button ---
     st.markdown("#### Tag details")
 
     # Group phrases by tag
@@ -93,48 +93,37 @@ def _render_funscript_section(project, phrases: List[dict], catalog) -> None:
         for tag in ph.get("tags", []):
             tag_groups.setdefault(tag, []).append(ph)
 
-    # Build summary rows
-    import pandas as pd
-    summary_rows = []
+    def _rng(lst):
+        if not lst: return "—"
+        lo, hi = round(min(lst), 1), round(max(lst), 1)
+        return f"{lo}–{hi}" if lo != hi else str(lo)
+
+    sample_tag = st.session_state.get("cv_sample_tag", None)
+
+    hcols = st.columns([2.2, 0.7, 2.0, 2.0, 1.5, 4.5, 1.0])
+    for h, lbl in zip(hcols, ["Tag", "Phrases", "BPM range", "Span range", "Centre", "Fix", ""]):
+        h.caption(lbl)
+
     for tag, phs in sorted(tag_groups.items(), key=lambda x: -len(x[1])):
         meta    = TAGS.get(tag)
         bpms    = [p.get("bpm", 0) for p in phs if p.get("bpm", 0) > 0]
         spans   = [p.get("metrics", {}).get("span", 0) for p in phs]
         m_poses = [p.get("metrics", {}).get("mean_pos", 50) for p in phs]
-        vels    = [p.get("metrics", {}).get("mean_velocity", 0) for p in phs]
 
-        def rng(lst):
-            if not lst: return "—"
-            lo, hi = round(min(lst), 1), round(max(lst), 1)
-            return f"{lo}–{hi}" if lo != hi else str(lo)
+        rc = st.columns([2.2, 0.7, 2.0, 2.0, 1.5, 4.5, 1.0])
+        rc[0].write(meta.label if meta else tag.title())
+        rc[1].write(len(phs))
+        rc[2].write(_rng(bpms))
+        rc[3].write(_rng(spans))
+        rc[4].write(_rng(m_poses))
+        rc[5].write(meta.fix_hint if meta else "—")
+        btn_label = "Hide" if sample_tag == tag else "Sample"
+        if rc[6].button(btn_label, key=f"cv_sample_btn_{tag}"):
+            st.session_state.cv_sample_tag = None if sample_tag == tag else tag
 
-        summary_rows.append({
-            "Tag":        meta.label if meta else tag.title(),
-            "Phrases":    len(phs),
-            "BPM range":  rng(bpms),
-            "Span range": rng(spans),
-            "Centre":     rng(m_poses),
-            "Velocity":   rng(vels),
-            "Fix":        meta.suggested_transform if meta else "—",
-        })
-
-    df = pd.DataFrame(summary_rows)
-    sel = st.dataframe(
-        df,
-        hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-        key="cv_tag_table",
-    )
-
-    # Sample chart for the selected row
-    sel_rows = sel.selection.get("rows", []) if sel and hasattr(sel, "selection") else []
-    if sel_rows:
-        sel_tag_label = summary_rows[sel_rows[0]]["Tag"]
-        sel_tag       = next((t for t, m in TAGS.items() if m.label == sel_tag_label), None)
-        if sel_tag and sel_tag in tag_groups:
-            sample_phrase = tag_groups[sel_tag][0]
-            _render_sample_chart(project, sample_phrase, sel_tag)
+    # Show sample chart for the active tag
+    if sample_tag and sample_tag in tag_groups:
+        _render_sample_chart(project, tag_groups[sample_tag][0], sample_tag)
 
 
 def _render_behavioral_timeline(rows: List[dict], duration_ms: int) -> None:
@@ -199,56 +188,73 @@ def _render_behavioral_timeline(rows: List[dict], duration_ms: int) -> None:
 
 
 def _render_sample_chart(project, phrase: dict, tag: str) -> None:
-    """Show a small chart of the selected phrase's actions."""
-    from visualizations.chart_data import compute_chart_data
-    from visualizations.funscript_chart import FunscriptChart
+    """Show a sample waveform for the first phrase with this tag."""
+    import plotly.graph_objects as go
 
-    meta = TAGS.get(tag)
+    meta     = TAGS.get(tag)
+    start_ms = phrase["start_ms"]
+    end_ms   = phrase["end_ms"]
+
     st.markdown(
         f"**Sample — {meta.label if meta else tag}** "
-        f"({ms_to_timestamp(phrase['start_ms'])} → {ms_to_timestamp(phrase['end_ms'])})"
+        f"({ms_to_timestamp(start_ms)} → {ms_to_timestamp(end_ms)})"
     )
 
     try:
-        with open(project.funscript_path) as f:
+        with open(project.funscript_path, encoding="utf-8") as f:
             all_actions = json.load(f)["actions"]
     except Exception:
         st.warning("Could not load funscript actions.")
         return
 
-    start_ms = phrase["start_ms"]
-    end_ms   = phrase["end_ms"]
-    window   = [a for a in all_actions if start_ms <= a["at"] <= end_ms]
+    window = [a for a in all_actions if start_ms <= a["at"] <= end_ms]
     if not window:
         st.caption("No actions in this window.")
         return
 
-    s = compute_chart_data(window)
+    xs = [a["at"] for a in window]
+    ys = [a["pos"] for a in window]
+    color = meta.color if meta else "rgba(255,165,0,0.85)"
 
-    class _VS:
-        zoom_start_ms      = start_ms
-        zoom_end_ms        = end_ms
-        color_mode         = "amplitude"
-        show_phrases       = False
-        selection_start_ms = None
-        selection_end_ms   = None
-        def has_zoom(self):      return True
-        def has_selection(self): return False
+    chart_col, btn_col = st.columns([5, 1])
 
-    chart = FunscriptChart(s, [], "", end_ms - start_ms)
-    fig   = chart._build_figure(_VS(), height=180)
-    fig.update_xaxes(range=[start_ms, end_ms], autorange=False)
-    st.plotly_chart(fig, config={"displayModeBar": False}, key=f"cv_sample_{tag}")
+    with chart_col:
+        _BG = "rgba(14,14,18,1)"
+        fig = go.Figure(go.Scatter(
+            x=xs, y=ys,
+            mode="lines",
+            line=dict(color=color, width=1.5),
+            showlegend=False,
+            hovertemplate="t=%{x} ms  pos=%{y}<extra></extra>",
+        ))
+        fig.update_layout(
+            height=160,
+            margin=dict(l=0, r=0, t=4, b=4),
+            paper_bgcolor=_BG, plot_bgcolor=_BG,
+            xaxis=dict(range=[start_ms, end_ms], showgrid=False, zeroline=False,
+                       tickfont=dict(color="rgba(180,180,180,0.6)", size=8)),
+            yaxis=dict(range=[0, 100], showgrid=True,
+                       gridcolor="rgba(80,80,80,0.25)",
+                       tickfont=dict(color="rgba(180,180,180,0.6)", size=8)),
+        )
+        st.plotly_chart(fig, config={"displayModeBar": False}, key=f"cv_sample_{tag}")
 
-    # Metrics row
-    m = phrase.get("metrics", {})
-    if m:
-        cols = st.columns(5)
-        cols[0].metric("BPM",      f"{phrase.get('bpm', 0):.0f}")
-        cols[1].metric("Span",     f"{m.get('span', 0):.0f}")
-        cols[2].metric("Centre",   f"{m.get('mean_pos', 50):.0f}")
-        cols[3].metric("Vel mean", f"{m.get('mean_velocity', 0):.3f}")
-        cols[4].metric("Duration", ms_to_timestamp(m.get("duration_ms", 0)))
+        m = phrase.get("metrics", {})
+        if m:
+            mc = st.columns(5)
+            mc[0].metric("BPM",      f"{phrase.get('bpm', 0):.0f}")
+            mc[1].metric("Span",     f"{m.get('span', 0):.0f}")
+            mc[2].metric("Centre",   f"{m.get('mean_pos', 50):.0f}")
+            mc[3].metric("Vel mean", f"{m.get('mean_velocity', 0):.3f}")
+            mc[4].metric("Duration", ms_to_timestamp(m.get("duration_ms", 0)))
+
+    with btn_col:
+        st.write("")  # vertical spacing
+        st.write("")
+        if st.button("Open in\nPattern Editor", key=f"cv_pe_{tag}"):
+            st.session_state.pe_selected_label    = tag
+            st.session_state.pe_selected_instance = 0
+            st.toast("Switch to the Pattern Editor tab", icon="ℹ️")
 
 
 # ---------------------------------------------------------------------------

@@ -382,24 +382,15 @@ def _detail_fragment(
     end_ms   = cycle["end_ms"]
     inst_idx = phrase_idx
 
-    # Segments and active segment for this instance
-    segments     = _get_segments(selected_label, inst_idx, cycle)
-    active_seg   = _get_active_seg(selected_label, inst_idx, len(segments))
-    split_points = _get_splits(selected_label, inst_idx)
-
     # Original window — full instance, untransformed
     original_window = [a for a in original_actions if start_ms <= a["at"] <= end_ms]
 
-    # Combined preview — all segment transforms applied
+    # Preview — transform applied to this instance
     preview_window = _build_combined_preview(original_actions, cycle, selected_label, inst_idx)
 
-    # Stable preview key — changes when any segment's transform changes
-    _seg_state  = "|".join(
-        f"{j}:{_get_seg_transform(selected_label, inst_idx, j).get('transform_key', '')}"
-        f":{_get_seg_transform(selected_label, inst_idx, j).get('param_values', {})}"
-        for j in range(len(segments))
-    )
-    preview_key = f"pe_prev_{selected_label}_{inst_idx}_{hash(_seg_state) % 1_000_000}"
+    # Stable preview key — changes when transform changes
+    _tx_state   = str(_get_seg_transform(selected_label, inst_idx, 0))
+    preview_key = f"pe_prev_{selected_label}_{inst_idx}_{hash(_tx_state) % 1_000_000}"
 
     col_orig, col_prev, col_ctrl = st.columns([2, 2, 1.5])
 
@@ -411,19 +402,18 @@ def _detail_fragment(
             end_ms=end_ms,
             key=f"pe_orig_{selected_label}_{inst_idx}",
             height=220,
-            split_points=split_points,
+            split_points=[],
         )
 
     with col_prev:
-        n_segs = len(segments)
-        st.caption("**Preview — all segments**" if n_segs > 1 else "**Preview**")
+        st.caption("**Preview**")
         _draw_instance_chart(
             actions=preview_window,
             start_ms=start_ms,
             end_ms=end_ms,
             key=preview_key,
             height=220,
-            split_points=split_points,
+            split_points=[],
         )
         st.caption("*(not saved)*")
 
@@ -436,8 +426,6 @@ def _detail_fragment(
             n_instances=n_instances,
             original_actions=original_actions,
             funscript_path=funscript_path,
-            active_seg=active_seg,
-            segments=segments,
         )
 
 
@@ -472,10 +460,8 @@ def _render_instance_table(
             tx_key = stored.get("transform_key", "")
             tx_display = tx_key if (tx_key and tx_key != "passthrough") else suggested
 
-        apply  = st.session_state.get(f"pe_apply_{selected_label}_{i}", True)
-        marker = "▶" if i == phrase_idx else ""
+        apply = st.session_state.get(f"pe_apply_{selected_label}_{i}", True)
         rows.append({
-            " ":         marker,
             "#":         i + 1,
             "Apply":     apply,
             "Pattern":   cy.get("pattern_label", "—"),
@@ -492,7 +478,7 @@ def _render_instance_table(
 
     df = pd.DataFrame(rows)
 
-    _READ_ONLY = [" ", "#", "Pattern", "Start", "End", "Duration",
+    _READ_ONLY = ["#", "Pattern", "Start", "End", "Duration",
                   "BPM", "Span", "Centre", "Velocity", "CV BPM", "Transform"]
 
     edited = st.data_editor(
@@ -501,7 +487,6 @@ def _render_instance_table(
         key=f"pe_instance_table_{selected_label}",
         disabled=_READ_ONLY,
         column_config={
-            " ":         st.column_config.TextColumn(width="small"),
             "#":         st.column_config.NumberColumn(width="small"),
             "Apply":     st.column_config.CheckboxColumn("Apply", default=True, width="small"),
             "Pattern":   st.column_config.TextColumn(width="medium"),
@@ -535,96 +520,47 @@ def _render_controls(
     n_instances: int,
     original_actions: List[dict],
     funscript_path: str,
-    active_seg: int,
-    segments: List[Tuple[int, int]],
 ) -> None:
     from pattern_catalog.phrase_transforms import TRANSFORM_CATALOG
-    from utils import ms_to_timestamp, parse_timestamp
+    from utils import ms_to_timestamp
 
     catalog_keys    = list(TRANSFORM_CATALOG.keys())
     catalog_labels  = [TRANSFORM_CATALOG[k].name for k in catalog_keys]
     passthrough_idx = catalog_keys.index("passthrough") if "passthrough" in catalog_keys else 0
 
-    n_segs = len(segments)
-    splits = _get_splits(selected_label, inst_idx)
+    # Always single segment (no splits)
+    active_seg = 0
 
     # ------------------------------------------------------------------
-    # Splits section
+    # Prev / Next navigation — top of controls
     # ------------------------------------------------------------------
-    st.markdown("**Splits**")
-
-    # One button per segment; active segment uses primary style
-    for seg_idx, (seg_s, seg_e) in enumerate(segments):
-        stored  = _get_seg_transform(selected_label, inst_idx, seg_idx)
-        tx_key  = stored.get("transform_key", "passthrough")
-        is_sel  = (seg_idx == active_seg)
-        lbl     = f"Seg {seg_idx + 1}  {ms_to_timestamp(seg_s)}–{ms_to_timestamp(seg_e)}"
-        if tx_key and tx_key != "passthrough":
-            lbl += f"  [{tx_key}]"
+    st.caption(f"#{inst_idx + 1} of {n_instances}")
+    col_p, col_n = st.columns(2)
+    with col_p:
         if st.button(
-            lbl,
-            key=f"pe_seg_btn_{selected_label}_{inst_idx}_{seg_idx}",
-            type="primary" if is_sel else "secondary",
+            "◀ Prev",
+            key=f"pe_prev_{selected_label}_{inst_idx}",
+            disabled=(inst_idx == 0),
             use_container_width=True,
         ):
-            st.session_state[f"pe_active_seg_{selected_label}_{inst_idx}"] = seg_idx
-            st.rerun()  # fragment-scoped rerun
-
-    # Add split point
-    with st.expander("Add split", expanded=False):
-        seg_s, seg_e = segments[active_seg]
-        default_mid  = ms_to_timestamp((seg_s + seg_e) // 2)
-        split_val = st.text_input(
-            "Split at (M:SS or H:MM:SS)",
-            value=default_mid,
-            key=f"pe_split_input_{selected_label}_{inst_idx}",
-            help=f"Add a boundary within {ms_to_timestamp(seg_s)} – {ms_to_timestamp(seg_e)}",
-        )
-        if st.button("Add", key=f"pe_split_add_{selected_label}_{inst_idx}",
-                     use_container_width=True):
-            try:
-                new_ms = parse_timestamp(split_val)
-            except Exception:
-                st.error("Invalid time format — use M:SS or H:MM:SS.")
-                return
-            if new_ms <= cycle["start_ms"] or new_ms >= cycle["end_ms"]:
-                st.error(
-                    f"Must be within instance range "
-                    f"({ms_to_timestamp(cycle['start_ms'])} – {ms_to_timestamp(cycle['end_ms'])})."
-                )
-                return
-            if new_ms in splits:
-                st.error("A split already exists at this time.")
-                return
-            if _add_split_point(selected_label, inst_idx, cycle, new_ms):
-                st.rerun()
-            else:
-                st.error("Could not add split — ensure the time is within an existing segment.")
-
-    # Remove split boundary
-    if n_segs > 1:
-        rm_idx = min(active_seg, len(splits) - 1)
-        rm_ms  = splits[rm_idx]
+            st.session_state.pe_selected_instance = inst_idx - 1
+            st.rerun(scope="app")
+    with col_n:
         if st.button(
-            f"Remove boundary at {ms_to_timestamp(rm_ms)}",
-            key=f"pe_split_remove_{selected_label}_{inst_idx}",
+            "Next ▶",
+            key=f"pe_next_{selected_label}_{inst_idx}",
+            disabled=(inst_idx >= n_instances - 1),
             use_container_width=True,
         ):
-            if _remove_split_boundary(selected_label, inst_idx, cycle, rm_idx):
-                new_n = n_segs - 1
-                if active_seg >= new_n:
-                    st.session_state[f"pe_active_seg_{selected_label}_{inst_idx}"] = new_n - 1
-                st.rerun()
+            st.session_state.pe_selected_instance = inst_idx + 1
+            st.rerun(scope="app")
 
     st.divider()
 
     # ------------------------------------------------------------------
-    # Transform for the active segment
+    # Transform
     # ------------------------------------------------------------------
-    if n_segs > 1:
-        st.markdown(f"**Transform (Seg {active_seg + 1}/{n_segs})**")
-    else:
-        st.markdown("**Transform**")
+    st.markdown("**Transform**")
 
     stored      = _get_seg_transform(selected_label, inst_idx, active_seg)
     stored_key  = stored.get("transform_key", "passthrough")
@@ -684,45 +620,44 @@ def _render_controls(
                 key=f"pe_tx_{selected_label}_{inst_idx}_{active_seg}_{pk}",
             )
 
-    # Persist transform for this segment
+    # Persist transform for this instance
     _set_seg_transform(selected_label, inst_idx, active_seg, {
         "transform_key": chosen_key,
         "param_values":  param_values,
     })
 
-    # Apply current transform to all segments of this instance
-    if n_segs > 1:
-        if st.button(
-            "Apply to all segs",
-            key=f"pe_apply_all_segs_{selected_label}_{inst_idx}",
-            use_container_width=True,
-            help=f"Apply this transform to all {n_segs} segments of this instance.",
-        ):
-            for seg_idx in range(n_segs):
-                _set_seg_transform(selected_label, inst_idx, seg_idx, {
-                    "transform_key": chosen_key,
-                    "param_values":  copy.deepcopy(param_values),
-                })
-            st.rerun()
+    st.divider()
 
-    # Apply this instance's split structure + transforms to all other instances
+    # Apply to this instance only
+    if st.button(
+        "Apply",
+        key=f"pe_apply_{selected_label}_{inst_idx}_single",
+        use_container_width=True,
+        type="primary",
+        help="Mark this instance as done in Work Items.",
+    ):
+        _proj = st.session_state.get("project")
+        if _proj and _proj.is_loaded:
+            for wi in _proj.work_items:
+                if wi.start_ms == cycle["start_ms"]:
+                    _proj.set_item_status(wi.id, "done")
+        st.success(f"Instance #{inst_idx + 1} marked done.")
+
+    # Apply this instance's transform to all other instances
     if st.button(
         "Apply to all",
         key=f"pe_apply_all_{selected_label}_{inst_idx}",
         use_container_width=True,
-        help=(
-            f"Copy this instance's split structure and transforms "
-            f"to all {n_instances} instances of '{selected_label}'."
-        ),
+        help=f"Copy this transform to all {n_instances} instances of '{selected_label}'.",
     ):
         _copy_instance_to_all(selected_label, inst_idx, cycle, cycles)
-        # Mark every matching work item as complete
+        # Mark every matching work item as done
         _proj = st.session_state.get("project")
         if _proj and _proj.is_loaded:
             cycle_starts = {cy["start_ms"] for cy in cycles}
             for wi in _proj.work_items:
                 if wi.start_ms in cycle_starts:
-                    _proj.set_item_completed(wi.id, True)
+                    _proj.set_item_status(wi.id, "done")
         st.rerun(scope="app")
 
     st.divider()
@@ -852,30 +787,6 @@ def _render_controls(
                 )
             except Exception as _exc:
                 st.error(f"Could not build patched funscript: {_exc}")
-
-    st.write("")
-
-    # Prev / Next navigation
-    st.caption(f"#{inst_idx + 1} of {n_instances}")
-    col_p, col_n = st.columns(2)
-    with col_p:
-        if st.button(
-            "⏮ Prev",
-            key=f"pe_prev_{selected_label}_{inst_idx}",
-            disabled=(inst_idx == 0),
-            use_container_width=True,
-        ):
-            st.session_state.pe_selected_instance = inst_idx - 1
-            st.rerun(scope="app")
-    with col_n:
-        if st.button(
-            "Next ⏭",
-            key=f"pe_next_{selected_label}_{inst_idx}",
-            disabled=(inst_idx >= n_instances - 1),
-            use_container_width=True,
-        ):
-            st.session_state.pe_selected_instance = inst_idx + 1
-            st.rerun(scope="app")
 
     st.divider()
 

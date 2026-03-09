@@ -11,11 +11,12 @@ Sidebar
   • Export buttons
 
 Main area  (tabs)
-  1. Viewer      — three-panel colour-coded chart with assessment navigator
-  2. Assessment  — pipeline output inspection
-  3. Work Items  — interactive section tagger
-  4. Edit        — detail panel for the selected item
-  5. Export      — summary of output files
+  1. Assessment        — pipeline output inspection
+  2. Phrase Editor     — three-panel colour-coded chart with assessment navigator
+  3. Pattern Behaviors — catalog of tagged phrase patterns
+  4. Pattern Editor    — per-instance waveform shaping
+  5. Transform Catalog — reference guide for all phrase transforms
+  6. Export            — summary of output files
 """
 
 from __future__ import annotations
@@ -32,12 +33,12 @@ import streamlit as st
 
 from ui.common.project import Project
 from ui.common.view_state import ViewState
-from ui.common.work_items import ItemType, WorkItem
+from ui.common.work_items import ItemType, WorkItem  # WorkItem kept for sidebar manual-add
 from ui.streamlit.panels import assessment as assessment_panel
 from ui.streamlit.panels import catalog_view as catalog_view_panel
 from ui.streamlit.panels import pattern_editor as pattern_editor_panel
+from ui.streamlit.panels import transform_catalog as transform_catalog_panel
 from ui.streamlit.panels import viewer as viewer_panel
-from ui.streamlit.panels import work_items as work_items_panel
 
 # ------------------------------------------------------------------
 # Page config (must be the first Streamlit call)
@@ -298,8 +299,8 @@ def _main() -> None:
         )
         return
 
-    tab_assessment, tab_viewer, tab_pattern, tab_catalog, tab_work_items, tab_export = st.tabs(
-        ["Assessment", "Phrase Editor", "Pattern Editor", "Catalog", "Work Items", "Export"]
+    tab_assessment, tab_viewer, tab_catalog, tab_pattern, tab_transforms, tab_export = st.tabs(
+        ["Assessment", "Phrase Editor", "Pattern Behaviors", "Pattern Editor", "Transform Catalog", "Export"]
     )
 
     with tab_assessment:
@@ -308,14 +309,14 @@ def _main() -> None:
     with tab_viewer:
         _render_viewer_tab(project)
 
-    with tab_pattern:
-        pattern_editor_panel.render(project)
-
     with tab_catalog:
         catalog_view_panel.render(project)
 
-    with tab_work_items:
-        work_items_panel.render(project)
+    with tab_pattern:
+        pattern_editor_panel.render(project)
+
+    with tab_transforms:
+        transform_catalog_panel.render()
 
     with tab_export:
         _render_export_tab(project)
