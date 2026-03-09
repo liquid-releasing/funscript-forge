@@ -17,8 +17,8 @@ import streamlit as st
 from utils import ms_to_timestamp
 
 # Log table column widths and headers
-_COL_W   = [0.4, 2.8, 1.0, 2.5, 2.0, 2.0, 1.5, 0.7]
-_HEADERS = ["#", "Time", "Dur (s)", "Transform", "Source", "BPM", "Cycles", ""]
+_COL_W   = [0.4, 2.8, 1.0, 2.5, 2.0, 2.0, 1.5, 0.5, 0.5]
+_HEADERS = ["#", "Time", "Dur (s)", "Transform", "Source", "BPM", "Cycles", "", ""]
 
 
 # ------------------------------------------------------------------
@@ -239,6 +239,14 @@ def _render_log(plan: List[dict]) -> None:
             else str(entry["old_cycles"])
         )
 
+        is_recommended = entry["source"] == "Recommended"
+        # Build param string for recommended rows
+        param_caption = None
+        if is_recommended and entry.get("param_values"):
+            param_caption = "  ".join(
+                f"{k}={v}" for k, v in entry["param_values"].items()
+            )
+
         rc = st.columns(_COL_W)
         if is_rej:
             _dim = lambda s: f"<span style='opacity:0.35'>{s}</span>"
@@ -249,7 +257,8 @@ def _render_log(plan: List[dict]) -> None:
             rc[4].markdown(_dim(entry["source"]),      unsafe_allow_html=True)
             rc[5].markdown(_dim(bpm_str),              unsafe_allow_html=True)
             rc[6].markdown(_dim(cyc_str),              unsafe_allow_html=True)
-            if rc[7].button("↩", key=f"export_restore_{idx}", help="Restore"):
+            # rc[7] edit slot — empty when rejected
+            if rc[8].button("↩", key=f"export_restore_{idx}", help="Restore"):
                 st.session_state.export_rejected.discard(idx)
                 st.rerun()
         else:
@@ -260,10 +269,17 @@ def _render_log(plan: List[dict]) -> None:
             rc[1].write(time_str)
             rc[2].write(dur_s)
             rc[3].write(entry["tx_name"])
+            if param_caption:
+                rc[3].caption(param_caption)
             rc[4].write(entry["source"])
             rc[5].write(bpm_str)
             rc[6].write(cyc_str)
-            if rc[7].button("🗑", key=f"export_reject_{idx}", help="Reject"):
+            if is_recommended:
+                if rc[7].button("✏", key=f"export_edit_{idx}", help="Edit in Phrase Editor"):
+                    st.session_state.view_state.set_selection(entry["start_ms"], entry["end_ms"])
+                    st.session_state.goto_tab = 1
+                    st.rerun()
+            if rc[8].button("🗑", key=f"export_reject_{idx}", help="Reject"):
                 st.session_state.export_rejected.add(idx)
                 st.rerun()
 
