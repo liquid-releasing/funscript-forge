@@ -410,6 +410,56 @@ def _find_extrema(actions: list, min_prominence: int = 10) -> list:
     return indices
 
 
+class _BlendSeams(PhraseTransform):
+    """Smooth sharp transitions where adjacent phrase transforms create abrupt jumps.
+
+    Computes local velocity (|Δpos / Δt| in pos/ms) between consecutive actions.
+    Actions near high-velocity jumps receive a stronger LPF blend; low-velocity
+    regions are left almost unchanged.  Smoothing concentrates automatically at
+    the seams between differently-styled sections without disturbing normal strokes.
+
+    Uses a **bilateral** (forward + backward) LPF so the seam is softened
+    symmetrically — approaching actions are blended, not just departing ones.
+
+    When applied via the ``finalize`` command to the full action list, it catches
+    both intra-phrase spikes and inter-phrase boundary jumps.  When applied
+    phrase-by-phrase via ``phrase-transform --all`` it softens internal spikes only.
+    """
+
+    def _transform(self, actions, p):
+        if len(actions) < 2:
+            return actions
+
+        max_vel      = p["max_velocity"]
+        max_strength = p["max_strength"]
+
+        # Velocity at each action (transition INTO this action from the previous one)
+        velocities = [0.0]
+        for i in range(1, len(actions)):
+            dt = max(1, actions[i]["at"] - actions[i - 1]["at"])
+            dp = abs(actions[i]["pos"] - actions[i - 1]["pos"])
+            velocities.append(dp / dt)
+        velocities[0] = velocities[1] if len(actions) > 1 else 0.0
+
+        # Per-action blend strength: proportional to how far velocity exceeds threshold
+        strengths = [
+            min(1.0, v / max_vel) * max_strength if max_vel > 0 else 0.0
+            for v in velocities
+        ]
+
+        # Bilateral LPF: average forward and backward passes for symmetric blending
+        positions = [a["pos"] for a in actions]
+        fwd = low_pass_filter(positions, strengths)
+        rev_pos = list(reversed(positions))
+        rev_str = list(reversed(strengths))
+        bwd = list(reversed(low_pass_filter(rev_pos, rev_str)))
+        smoothed = [int((f + b) / 2.0) for f, b in zip(fwd, bwd)]
+
+        for a, pos in zip(actions, smoothed):
+            a["pos"] = pos
+        return actions
+
+
 class _HalveTempo(PhraseTransform):
     """Halve the BPM by keeping every other stroke cycle.
 
@@ -648,6 +698,35 @@ TRANSFORM_CATALOG: Dict[str, PhraseTransform] = {
                     label="Range high", type="int", default=100,
                     min_val=51, max_val=100, step=5,
                     help="Hard maximum position after scaling.",
+                ),
+            },
+        ),
+        _BlendSeams(
+            key="blend_seams",
+            name="Blend Seams",
+            description="Detect high-velocity transitions between differently-styled sections and smooth them — concentrates blending at seams, leaves normal strokes untouched.",
+            params={
+                "max_velocity": TransformParam(
+                    label="Max velocity (pos/ms)", type="float", default=0.50,
+                    min_val=0.05, max_val=2.0, step=0.05,
+                    help="Velocity threshold above which full blending is applied. Lower = catch more transitions.",
+                ),
+                "max_strength": TransformParam(
+                    label="Max blend strength", type="float", default=0.70,
+                    min_val=0.0, max_val=1.0, step=0.05,
+                    help="LPF strength applied at peak-velocity seams. 0 = off, 1 = maximum smoothing.",
+                ),
+            },
+        ),
+        _Smooth(
+            key="final_smooth",
+            name="Final Smooth",
+            description="Light global LPF finishing pass — takes off residual harsh edges after all phrase transforms have been applied.",
+            params={
+                "strength": TransformParam(
+                    label="Smoothing strength", type="float", default=0.10,
+                    min_val=0.01, max_val=0.5, step=0.01,
+                    help="0.10 is a very light pass (matches LPF_DEFAULT from six_task_transformer). Increase for more smoothing.",
                 ),
             },
         ),

@@ -95,7 +95,6 @@ python cli.py transform input.funscript \
 python -m unittest tests.test_transformer -v
 ```
 
-
 ## Interactive phrase transforms (`phrase_transforms.py`)
 
 The Streamlit phrase detail panel lets users apply named transforms to
@@ -119,6 +118,8 @@ and is independent of the bulk pipeline transformer.
 | `break` | Break | Pulls all positions toward centre 50 by a `reduce` fraction, then applies LPF smoothing — equivalent to a gentle amplitude_scale + smooth in one step | Rest, recovery, or transition sections; tones down intensity without removing motion entirely |
 | `performance` | Performance | Velocity-capped, reversal-softened strokes with range compression and optional LPF — three passes: (1) cap pos-change/ms, (2) blend direction-change reversals, (3) clamp range + smooth | Intense high-BPM phrases that need realistic device shaping; prevents mechanical overshoot at stroke reversals |
 | `three_one` | Three-One Pulse | Groups beats into blocks of 4: beats 1–3 are strokes (amplitude-scaled around the group centre), beat 4 is a flat hold at the group centre — timestamps unchanged | Fast up-down patterns where you want a rest beat every 4th; optional `range_lo`/`range_hi` caps limit stroke depth |
+| `blend_seams` | Blend Seams | Velocity-adaptive bilateral LPF: concentrates smoothing at high-velocity jumps (seams between differently-styled phrases), leaves normal strokes untouched | Applied globally via `finalize` to smooth inter-phrase boundaries; can also be applied phrase-by-phrase for intra-phrase spikes |
+| `final_smooth` | Final Smooth | Light global LPF finishing pass (default strength 0.10, matching `LPF_DEFAULT` from six_task_transformer) — removes residual harsh edges after all phrase transforms | Last step before saving; automatically run by `finalize` command |
 | `halve_tempo` | Halve Tempo | Keeps every other stroke cycle (temporal decimation), retimed evenly over the same phrase duration — *structural* transform, returns fewer actions | Very fast phrases where you want half the BPM with the same amplitude and duration |
 
 ### CLI usage (`phrase-transform` command)
@@ -220,6 +221,28 @@ python cli.py phrase-transform input.funscript \
 python cli.py phrase-transform input.funscript \
     --assessment assessment.json \
     --suggest --dry-run
+```
+
+### Finalize command — auto blend + smooth before saving
+
+After applying all phrase transforms, run `finalize` to smooth inter-phrase seams
+and apply a light global finishing pass.  The UI calls this automatically on Save.
+
+```bash
+# Standard finalize (blend_seams + final_smooth at defaults)
+python cli.py finalize transformed.funscript
+
+# Custom seam threshold and smoother finishing pass
+python cli.py finalize transformed.funscript \
+    --param seam_max_velocity=0.30 \
+    --param seam_max_strength=0.80 \
+    --param smooth_strength=0.05
+
+# Skip seam blending, run only the final smooth pass
+python cli.py finalize transformed.funscript --skip-seams
+
+# Write to a specific output path
+python cli.py finalize transformed.funscript --output finalized.funscript
 ```
 
 ### Programmatic use
