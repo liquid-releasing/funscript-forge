@@ -45,6 +45,8 @@ _EXPECTED_KEYS = {
     "break",
     "performance",
     "three_one",
+    "blend_seams",
+    "final_smooth",
     "halve_tempo",
 }
 
@@ -904,6 +906,140 @@ class TestHalveTempo(unittest.TestCase):
         self.assertLess(len(result), len(actions))
         self.assertEqual(result[0]["at"], actions[0]["at"])
         self.assertEqual(result[-1]["at"], actions[-1]["at"])
+
+
+# ---------------------------------------------------------------------------
+# blend_seams
+# ---------------------------------------------------------------------------
+
+class TestBlendSeams(unittest.TestCase):
+    """Tests for the blend_seams velocity-adaptive bilateral LPF transform."""
+
+    def _with_jump(self):
+        """Actions with a sharp positional jump between index 2 and 3."""
+        # First half around 70–75, then a hard cut to 20–25
+        return [
+            {"at":   0, "pos": 72},
+            {"at": 100, "pos": 75},
+            {"at": 200, "pos": 73},
+            {"at": 300, "pos": 20},   # sharp jump: |20-73|/100 = 0.53 pos/ms
+            {"at": 400, "pos": 22},
+            {"at": 500, "pos": 25},
+        ]
+
+    def test_sharp_jump_is_softened(self):
+        """The action immediately after a high-velocity jump should be blended
+        toward the incoming value, not left at the raw target."""
+        actions = self._with_jump()
+        raw_jump = actions[3]["pos"]   # 20
+        result = TRANSFORM_CATALOG["blend_seams"].apply(
+            actions, {"max_velocity": 0.40, "max_strength": 0.70}
+        )
+        # Bilateral blend: position 3 should be between raw (20) and pre-jump (73)
+        self.assertGreater(result[3]["pos"], raw_jump,
+                           "jump action should be blended upward, not stay at 20")
+
+    def test_smooth_region_largely_unchanged(self):
+        """Actions with velocity well below threshold should be barely touched.
+
+        Velocity here: |75-25| / 500ms = 0.10 pos/ms  →  fraction = 0.10/0.50 = 0.20
+        → blend strength = 0.20 * 0.70 = 0.14 → positions stay very close to original.
+        """
+        actions = [{"at": i * 500, "pos": 75 if i % 2 == 0 else 25}
+                   for i in range(6)]
+        result = TRANSFORM_CATALOG["blend_seams"].apply(
+            actions, {"max_velocity": 0.50, "max_strength": 0.70}
+        )
+        # Positions should remain within 15 of originals
+        for orig, res in zip(actions, result):
+            self.assertAlmostEqual(orig["pos"], res["pos"], delta=15,
+                                   msg=f"Smooth region changed too much at at={orig['at']}")
+
+    def test_same_length_and_timestamps(self):
+        actions = self._with_jump()
+        result = TRANSFORM_CATALOG["blend_seams"].apply(actions)
+        self.assertEqual(len(result), len(actions))
+        self.assertEqual([a["at"] for a in result], [a["at"] for a in actions])
+
+    def test_empty_and_single_action(self):
+        self.assertEqual(TRANSFORM_CATALOG["blend_seams"].apply([]), [])
+        single = [{"at": 0, "pos": 50}]
+        result = TRANSFORM_CATALOG["blend_seams"].apply(single)
+        self.assertEqual(result[0]["pos"], 50)
+
+    def test_positions_stay_in_range(self):
+        actions = self._with_jump()
+        result = TRANSFORM_CATALOG["blend_seams"].apply(actions)
+        for a in result:
+            self.assertGreaterEqual(a["pos"], 0)
+            self.assertLessEqual(a["pos"], 100)
+
+    def test_max_strength_zero_is_passthrough(self):
+        """max_strength=0 → no blending → positions unchanged."""
+        actions = self._with_jump()
+        result = TRANSFORM_CATALOG["blend_seams"].apply(
+            actions, {"max_velocity": 0.40, "max_strength": 0.0}
+        )
+        self.assertEqual([a["pos"] for a in result], [a["pos"] for a in actions])
+
+    def test_does_not_mutate_input(self):
+        actions = self._with_jump()
+        original = [{"at": a["at"], "pos": a["pos"]} for a in actions]
+        TRANSFORM_CATALOG["blend_seams"].apply(actions)
+        self.assertEqual(actions, original)
+
+    def test_default_params_in_catalog(self):
+        spec = TRANSFORM_CATALOG["blend_seams"]
+        self.assertAlmostEqual(spec.params["max_velocity"].default, 0.50)
+        self.assertAlmostEqual(spec.params["max_strength"].default, 0.70)
+
+    def test_not_structural(self):
+        self.assertFalse(TRANSFORM_CATALOG["blend_seams"].structural)
+
+
+# ---------------------------------------------------------------------------
+# final_smooth
+# ---------------------------------------------------------------------------
+
+class TestFinalSmooth(unittest.TestCase):
+    """Tests for the final_smooth light global LPF finishing pass."""
+
+    def test_in_catalog(self):
+        self.assertIn("final_smooth", TRANSFORM_CATALOG)
+
+    def test_default_strength_is_light(self):
+        """Default strength should match LPF_DEFAULT=0.10 from six_task_transformer."""
+        spec = TRANSFORM_CATALOG["final_smooth"]
+        self.assertAlmostEqual(spec.params["strength"].default, 0.10)
+
+    def test_applies_lpf(self):
+        """A rapidly alternating signal should have reduced range after smoothing."""
+        actions = [{"at": i * 10, "pos": 0 if i % 2 == 0 else 100}
+                   for i in range(10)]
+        result = TRANSFORM_CATALOG["final_smooth"].apply(actions, {"strength": 0.40})
+        raw_range  = max(a["pos"] for a in actions) - min(a["pos"] for a in actions)
+        out_range  = max(a["pos"] for a in result)  - min(a["pos"] for a in result)
+        self.assertLess(out_range, raw_range)
+
+    def test_strength_zero_is_passthrough(self):
+        actions = _actions([10, 50, 90, 20, 80])
+        result = TRANSFORM_CATALOG["final_smooth"].apply(actions, {"strength": 0.0})
+        self.assertEqual([a["pos"] for a in result], [10, 50, 90, 20, 80])
+
+    def test_same_length_and_timestamps(self):
+        actions = _actions([0, 50, 100, 50])
+        result = TRANSFORM_CATALOG["final_smooth"].apply(actions)
+        self.assertEqual(len(result), len(actions))
+        self.assertEqual([a["at"] for a in result], [a["at"] for a in actions])
+
+    def test_does_not_mutate_input(self):
+        actions = _actions([10, 90, 10, 90])
+        original = [a["pos"] for a in actions]
+        TRANSFORM_CATALOG["final_smooth"].apply(actions)
+        self.assertEqual([a["pos"] for a in actions], original)
+
+    def test_not_structural(self):
+        self.assertFalse(TRANSFORM_CATALOG["final_smooth"].structural)
 
 
 if __name__ == "__main__":
