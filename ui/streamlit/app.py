@@ -37,6 +37,7 @@ from ui.streamlit.panels import assessment as assessment_panel
 from ui.streamlit.panels import catalog_view as catalog_view_panel
 from ui.streamlit.panels import pattern_editor as pattern_editor_panel
 from ui.streamlit.panels import viewer as viewer_panel
+from ui.streamlit.panels import work_items as work_items_panel
 
 # ------------------------------------------------------------------
 # Page config (must be the first Streamlit call)
@@ -297,8 +298,8 @@ def _main() -> None:
         )
         return
 
-    tab_assessment, tab_viewer, tab_pattern, tab_catalog, tab_export = st.tabs(
-        ["Assessment", "Phrase Editor", "Pattern Editor", "Catalog", "Export"]
+    tab_assessment, tab_viewer, tab_pattern, tab_catalog, tab_work_items, tab_export = st.tabs(
+        ["Assessment", "Phrase Editor", "Pattern Editor", "Catalog", "Work Items", "Export"]
     )
 
     with tab_assessment:
@@ -312,6 +313,9 @@ def _main() -> None:
 
     with tab_catalog:
         catalog_view_panel.render(project)
+
+    with tab_work_items:
+        work_items_panel.render(project)
 
     with tab_export:
         _render_export_tab(project)
