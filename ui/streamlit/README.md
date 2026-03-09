@@ -22,139 +22,73 @@ Opens at `http://localhost:8501`.
 | Fast rendering threshold | Funscripts above this action count use a grey line for speed |
 | Transform BPM threshold | Phrases at or above this BPM receive the Amplitude Scale suggestion |
 | Re-analyse | Force a fresh assessment with the current settings |
+| Add manual item | Define a work item by typing start/end times (ms) and a type |
+| Export window JSONs | Write `performance.json`, `break.json`, `raw.json` to `output/` |
+| Save project | Write a full project snapshot to `output/<name>.project.json` |
 
 Settings auto-apply when changed; the assessment reruns automatically.
 
+---
+
 ## Tabs
 
-### 1. Phrase Selector
+### 1. Assessment
 
-The primary workspace.  Shows the full funscript as a colour-coded chart
-(velocity or amplitude mode) with phrase bounding boxes overlaid.
+Full pipeline output for the loaded funscript.
 
-#### Selecting a phrase
+- **Summary** — eight metrics: duration, average BPM, action count, phases, cycles, patterns, phrases, BPM transitions.
+- **Phrases** — colour-coded BPM timeline strip + per-row table with **Focus** button (zooms Phrase Editor to that time range). Columns: #, Time, BPM, Duration, Description, Tags.
+- **BPM Transitions** — step chart showing BPM at each phrase midpoint with transition markers + per-row table with **Focus** button.
+- **Behavioral Patterns** — phrase-count bar chart per behavioral tag + per-row table with **Focus** button (switches to Pattern Editor). Columns: Tag, Description, Phrases, BPM range.
+- **Phases** — collapsible expander with direction-breakdown bar chart and first 50 phases.
 
-- Click anywhere inside a phrase box on the chart, or
-- Click a numbered phrase button (P1, P2, …) below the chart.
+### 2. Phrase Editor
 
-Once a phrase is selected the chart is hidden and the **Phrase Detail** panel
-appears in its place.
+Full-funscript chart with phrase bounding boxes. Navigate and zoom into any phrase for detail editing.
 
-#### Chart controls (visible in selector mode only)
+**Navigation:**
 
-| Control | Effect |
-| --- | --- |
-| Color mode radio | Switch between velocity and amplitude colouring |
-| From / To text inputs | Type a timestamp (`M:SS`) to jump to a time range |
-| ◀ / ▶ | Scroll left / right by one-third of the current window |
-| All | Reset zoom to show the full funscript |
-| ＋ / － | Zoom in / out (halve or double the time window) |
+- **Prev / Next** — step through phrases.
+- **P1, P2, …** — jump directly to any phrase.
+- Click a point on the chart to select that phrase.
 
-#### Large funscript rendering
-
-Funscripts above the fast rendering threshold (default: 10 000 actions) use a
-single grey connecting line for speed; smaller funscripts use per-segment
-coloured lines that match the dot colours.
-
----
-
-### Phrase Detail (replaces Phrase Selector when a phrase is selected)
+**Phrase Detail panel** (appears when a phrase is selected):
 
 ```text
-┌─────────────────────────────────┬──────────────┐
-│  P{N} — Phrase Detail           │              │
-│  Original chart (fixed x-axis)  │  Transform   │
-├─────────────────────────────────│  controls    │
-│  Preview — {Transform Name}     │              │
-│  Preview chart (fixed x-axis)   │  ⏮ Prev      │
-│  [position stats table]         │     Next ⏭   │
-│  *(not saved)*                  │  ── divider ─│
-│                                 │  💾 Save      │
-└─────────────────────────────────│  ✕ Cancel    │
-                                  └──────────────┘
+┌──────────────────────────────┬─────────────────┐
+│  Original chart              │  ⏮ Prev  Next ⏭ │
+├──────────────────────────────│  Transform      │
+│  Preview — {Transform Name}  │  controls       │
+│  Preview chart               │  ── divider ─── │
+│  Position stats table        │  Apply          │
+│                              │  Apply to all   │
+└──────────────────────────────┴─────────────────┘
 ```
 
-**Original chart** — the phrase as it exists in the loaded funscript.
+- **Apply** — marks the current phrase's work item as Done.
+- **Apply to all** — copies the current phrase's transform to every instance of the same behavioral tag and marks all Done.
 
-**Preview chart** — live preview with the selected transform applied.  Only the
-phrase slice is transformed; surrounding context uses original positions.
+### 3. Pattern Behaviors
 
-Both charts:
+Cross-funscript behavioral pattern catalog.
 
-- Share the same fixed x-axis width (based on the longest phrase in the file
-  so stroke velocity is visually comparable across all phrases).
-- Show the selected phrase at full brightness; surrounding context is dimmed.
-- Have the modebar removed — the timescale cannot be accidentally changed.
+**This funscript section:**
 
-#### Position stats table (below the preview chart)
+- Gantt-style behavioral timeline (one row per tag)
+- Tag summary table with **Sample** button (shows a live waveform preview) and **Open in Pattern Editor** button
+- Per-tag stats: phrase count, BPM range, span range, centre, velocity
 
-| Column | Meaning |
-| --- | --- |
-| Min | Lowest position value in the preview phrase slice |
-| Max | Highest position value |
-| Range | Max − Min (stroke depth indicator) |
-| Mean | Average position |
-| Actions | Number of actions in the phrase |
+**Your library section:**
 
-#### Transform controls
+- Phrase counts and files indexed
+- Tag frequency bar chart
+- Aggregate stats table and per-file breakdown
 
-Choose from the catalog of named transforms.  The rule-based suggestion for
-the phrase is shown in a caption; the selectbox defaults to Passthrough so
-the user starts with no change applied.
+The catalog is stored at `output/pattern_catalog.json` and auto-updated on each assessment.
 
-Transforms with parameters expose sliders that update the preview in real time.
+### 4. Pattern Editor
 
-| Transform | Effect |
-| --- | --- |
-| Passthrough | No change |
-| Amplitude Scale | Scale stroke depth around midpoint (50) |
-| Normalize Range | Expand positions to fill a target range |
-| Smooth | Low-pass filter to reduce jitter |
-| Clamp Upper Half | Compress into 50–100 zone |
-| Clamp Lower Half | Compress into 0–50 zone |
-| Invert | Mirror positions around 50 |
-| Boost Contrast | Push toward 0 and 100 extremes |
-
-#### Navigation
-
-- ⏮ Prev / Next ⏭ — move to the previous or next phrase (transform choices are
-  remembered per phrase within the session).
-
-#### Save / Cancel
-
-- 💾 **Save** — applies all stored per-phrase transforms (across the entire
-  funscript), downloads the result as `{name}.edited.funscript`, and returns
-  to the phrase selector.  The original file is never modified.
-- ✕ **Cancel** — discards all stored transforms and returns to the phrase
-  selector without downloading.
-
----
-
-### 2. Assessment
-
-Read-only display of the pipeline output: summary metrics, phase breakdown,
-cycle → pattern table, phrase BPM timeline, and BPM transition table.
-
-### 3. Navigator
-
-Assessment navigator: scroll through phases, cycles, patterns, and phrases
-with linked chart highlighting.
-
-### 4. Work Items
-
-Scrollable list of all detected sections.  Each row shows time range, BPM,
-and a type selector (Performance / Break / Raw / Neutral).  Click **Edit** to
-open the detail panel for that item.
-
-### 5. Edit
-
-Detail panel for the selected work item.  Shows type-specific controls
-(performance velocity limits, break amplitude settings, etc.).
-
-### 6. Pattern Editor
-
-Behavioral pattern batch-fix workspace.  Phrases are pre-classified by
-`assessment/classifier.py` into 8 behavioral tags:
+Behavioral pattern batch-fix workspace. Phrases are pre-classified into 8 behavioral tags:
 
 | Tag | Problem | Suggested transform |
 | --- | --- | --- |
@@ -167,61 +101,45 @@ Behavioral pattern batch-fix workspace.  Phrases are pre-classified by
 | Lazy | Slow and shallow | amplitude_scale |
 | Frantic | BPM > 200, near device limit | halve_tempo |
 
-#### Layout
+**Layout:**
 
 ```text
 [Left: tag buttons with counts]  [Right: detail area]
-                                  ├─ Selector chart (full funscript,
-                                  │    matching phrases highlighted)
+                                  ├─ Selector chart (all matching phrases)
                                   ├─ Instance table (Start, Duration, BPM,
                                   │    Span, Centre, Velocity, Apply checkbox)
-                                  ├─ Original chart │ Preview chart │ Splits + Controls
-                                  └─ Finalize options + Build download
+                                  ├─ Prev / Next navigation
+                                  ├─ Original chart  │  Preview chart
+                                  └─ Transform controls + Apply / Apply to all
 ```
 
-- **Apply checkbox** (default checked) — uncheck to exclude an instance from the download build.
-- **Apply to all** — copy the current instance's split structure and transforms to every instance (split points are scaled proportionally to each instance's duration).
-- **Build download** — compiles all stored transforms + finalize passes into a downloadable funscript.  Only runs on demand (not on every slider tick).
+- **Apply checkbox** — uncheck to exclude an instance from the download build.
+- **Apply** — apply to the current instance only and mark its work item Done.
+- **Apply to all** — copy the current transform to every checked instance and mark all Done.
+- **Build download** — compile all stored transforms into a downloadable funscript.
 
-#### Splitting an instance
+### 5. Transform Catalog
 
-Long patterns (e.g. a single phrase spanning most of a file) can be divided into
-non-overlapping sub-segments, each with its own independent transform.
+Reference guide for all 17 phrase transforms, grouped by capability:
 
-| Control | Effect |
+| Group | Transforms |
 | --- | --- |
-| Segment buttons (Seg 1, Seg 2, …) | Click to select a segment for editing; active segment shown in primary style |
-| **Add split** expander | Enter a timestamp (M:SS or H:MM:SS) within the instance and click **Add** to create a new boundary |
-| **Remove boundary at …** | Merges the active segment with the adjacent one; only shown when more than one segment exists |
-| **Apply to all segs** | Copy the current transform + params to all segments of this instance |
-| **Apply to all** | Copy this instance's full split structure (scaled proportionally) and all segment transforms to every other instance of the same tag |
+| Passthrough | passthrough |
+| Amplitude Shaping | amplitude_scale, normalize, boost_contrast |
+| Position Adjustment | shift, recenter, clamp_upper, clamp_lower, invert |
+| Smoothing & Filtering | smooth, blend_seams, final_smooth |
+| Break / Recovery | break |
+| Performance / Device Realism | performance |
+| Rhythmic Patterns | beat_accent, three_one |
+| Structural — Tempo | halve_tempo |
 
-Split boundaries are shown as dashed orange vertical lines on both the original and preview charts.
-The preview chart always shows the combined result of all segment transforms.
+Each entry shows: description, best-fit behavioral tags, a parameter table, live sliders, and side-by-side Before/After charts that update as you adjust the sliders.
 
-### 7. Catalog
+### 6. Export
 
-Read-only analytics across all assessed funscripts.
+Summary tables of typed work items (Performance, Break, Raw) and a **Write JSON files** button that writes window files to `output/` for the downstream customizer pipeline.
 
-#### This funscript section
-
-- Gantt-style behavioral timeline: one row per tag, bars show where each pattern appears
-- Tag summary table: phrase count, BPM range, span range, centre, velocity, suggested fix
-- Sample chart: click a table row to see the first matching phrase's motion + metrics
-
-#### Your library section
-
-- Phrase counts and files indexed
-- Tag frequency bar chart
-- Aggregate stats table (BPM/span/velocity ranges per tag)
-- Per-file breakdown expander
-
-The catalog is stored at `output/pattern_catalog.json` and auto-updated whenever a funscript is analysed.
-
-### 8. Export
-
-Summary tables of typed work items and a button to write JSON window files
-for the downstream customizer pipeline.
+---
 
 ## Panels
 
@@ -229,14 +147,13 @@ Each panel is an independent module in `panels/`:
 
 | Module | Responsibility |
 | --- | --- |
-| `panels/viewer.py` | Phrase Selector + Phrase Detail orchestration |
-| `panels/phrase_detail.py` | Phrase Detail panel (charts, transforms, save/cancel) |
-| `panels/assessment.py` | Read-only pipeline output display |
-| `panels/assessment_nav.py` | Assessment navigator |
-| `panels/work_items.py` | Interactive section tagger |
-| `panels/detail.py` | Editable controls for the selected work item |
+| `panels/viewer.py` | Phrase Editor orchestration (full chart + phrase detail) |
+| `panels/phrase_detail.py` | Phrase Detail panel (charts, transforms, apply) |
+| `panels/assessment.py` | Assessment tab — pipeline output display |
 | `panels/pattern_editor.py` | Behavioral pattern batch-fix editor |
-| `panels/catalog_view.py` | Cross-funscript pattern catalog analytics |
+| `panels/catalog_view.py` | Pattern Behaviors tab — cross-funscript catalog analytics |
+| `panels/transform_catalog.py` | Transform Catalog tab — reference guide with live previews |
+| `panels/work_items.py` | Work item model helpers (status lifecycle) |
 
 Panels do **not** hold state — all state lives in `st.session_state.project`
 (a `ui.common.project.Project`) and `st.session_state.view_state`
@@ -248,7 +165,6 @@ All outputs go to `output/` (gitignored).
 
 | File | Description |
 | --- | --- |
-| `<name>.edited.funscript` | User-edited funscript (downloaded via Save button) |
 | `<name>_pattern_edited.funscript` | Pattern Editor download |
 | `<name>.performance.json` | Performance window list for customizer |
 | `<name>.break.json` | Break window list |
@@ -258,12 +174,7 @@ All outputs go to `output/` (gitignored).
 
 ## Performance notes
 
-- The phrase selector chart is hidden while a phrase is selected — no chart
-  redraw overhead during editing.
-- Detail charts compute colour data only for the visible window (not the full
-  funscript) so they render quickly even for long files.
-- The fast rendering threshold in the sidebar controls when the phrase selector
-  switches from per-segment coloured lines to a single grey line.
-- Pattern Editor instance charts use minimal raw Plotly (no amplitude
-  colour calculation); original actions are cached in session state.
+- Detail charts compute colour data only for the visible window (not the full funscript).
+- The fast rendering threshold controls when the phrase selector switches from per-segment coloured lines to a single grey line.
+- Pattern Editor instance charts use minimal raw Plotly; original actions are cached in session state.
 - Pattern Editor download bytes are built only on demand via **Build download**.
