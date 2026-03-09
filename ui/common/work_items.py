@@ -86,12 +86,17 @@ class WorkItem:
     bpm: float = 0.0
     source: str = "manual"
     config: Dict[str, Any] = field(default_factory=dict)
-    completed: bool = False
+    # Status lifecycle: "todo" → "in_progress" → "done"
+    status: str = "todo"
 
     def __post_init__(self) -> None:
         # Populate config with type defaults if empty.
         if not self.config:
             self.config = _default_config(self.item_type)
+
+    @property
+    def completed(self) -> bool:
+        return self.status == "done"
 
     # ------------------------------------------------------------------
     # Derived properties
@@ -148,7 +153,7 @@ class WorkItem:
             "bpm": self.bpm,
             "source": self.source,
             "config": self.config,
-            "completed": self.completed,
+            "status": self.status,
         }
 
     @classmethod
@@ -162,7 +167,8 @@ class WorkItem:
             bpm=d.get("bpm", 0.0),
             source=d.get("source", "manual"),
             config=d.get("config", {}),
-            completed=d.get("completed", False),
+            # migrate old bool "completed" field
+            status=d.get("status", "done" if d.get("completed", False) else "todo"),
         )
 
 
