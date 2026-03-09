@@ -57,7 +57,7 @@ def render(project) -> None:
     with col_chk:
         include_recommended = st.checkbox(
             "Include recommended transforms for untouched phrases",
-            value=True,
+            value=False,
             key="export_include_recommended",
         )
         blend_seams = st.checkbox(
