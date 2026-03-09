@@ -310,7 +310,7 @@ def _render_phrase_bar(phrases: list, view_state) -> None:
         rc[3].write(f"{bpm:.1f}")
         rc[4].write(behavior)
         rc[5].write(str(cycles))
-        if rc[6].button("Edit", key=f"phrase_btn_{i}", type="primary" if is_sel else "secondary"):
+        if rc[6].button("✏", key=f"phrase_btn_{i}", type="primary" if is_sel else "secondary", help="Edit phrase"):
             _select_phrase(ph, view_state)
             st.rerun(scope="app")
 

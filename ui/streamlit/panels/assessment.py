@@ -136,7 +136,7 @@ def _render_phrases_section(phrases: List[Dict], project: "Project") -> None:
         rc[3].write(ms_to_timestamp(max(0, dur_ms)))
         rc[4].write(desc)
         rc[5].write(tag_labels)
-        if rc[6].button("Focus", key=f"ph_focus_{i}"):
+        if rc[6].button("👁", key=f"ph_focus_{i}", help="Focus in Phrase Editor"):
             st.session_state.view_state.set_selection(ph["start_ms"], ph["end_ms"])
             st.session_state.goto_tab = 1
             st.rerun()
@@ -232,7 +232,7 @@ def _render_bpm_transitions_section(
             rc[2].write(f"{t.get('to_bpm', 0):.1f}")
             rc[3].write(f"{abs(t.get('change_pct', 0)):.1f}%")
             rc[4].write(direction)
-            if rc[5].button("Focus", key=f"bt_focus_{i}"):
+            if rc[5].button("👁", key=f"bt_focus_{i}", help="Focus in Phrase Editor"):
                 at_ms = t.get("at_ms", 0)
                 surrounding = None
                 for ph in phrases:
@@ -393,7 +393,7 @@ def _render_patterns_section(patterns: List[Dict], phrases: List[Dict]) -> None:
         rc[1].write(meta.description if meta else "")
         rc[2].write(len(phs))
         rc[3].write(bpm_rng)
-        if rc[4].button("Focus", key=f"bhv_focus_{i}"):
+        if rc[4].button("👁", key=f"bhv_focus_{i}", help="Focus in Pattern Editor"):
             st.session_state.pe_selected_label = tag
             st.session_state.pe_selected_instance = 0
             st.toast("Switch to the Pattern Editor tab", icon="ℹ️")
