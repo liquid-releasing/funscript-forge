@@ -289,55 +289,58 @@ def _render_instance_table(
 
     rows = []
     for i, cy in enumerate(cycles):
-        m   = cy.get("metrics", {})
-        stored  = st.session_state.get(f"pe_transform_{selected_label}_{i}", {})
-        tx_key  = stored.get("transform_key", "")
-        has_tx  = bool(tx_key and tx_key != "passthrough")
-        # Mark selected row with an arrow so it's visible after navigation
-        marker  = "▶" if i == phrase_idx else ("✓" if has_tx else "")
+        m      = cy.get("metrics", {})
+        stored = st.session_state.get(f"pe_transform_{selected_label}_{i}", {})
+        tx_key = stored.get("transform_key", "")
+        has_tx = bool(tx_key and tx_key != "passthrough")
+        apply  = st.session_state.get(f"pe_apply_{selected_label}_{i}", True)
+        marker = "▶" if i == phrase_idx else ""
         rows.append({
-            " ":          marker,
-            "#":          i + 1,
-            "Pattern":    cy.get("pattern_label", "—"),
-            "Start":      ms_to_timestamp(cy["start_ms"]),
-            "End":        ms_to_timestamp(cy["end_ms"]),
-            "Duration":   ms_to_timestamp(cy["end_ms"] - cy["start_ms"]),
-            "BPM":        round(cy.get("bpm", 0), 1),
-            "Span":       round(m.get("span", 0), 1),
-            "Centre":     round(m.get("mean_pos", 50), 1),
-            "Velocity":   round(m.get("mean_velocity", 0), 3),
-            "CV BPM":     round(m.get("cv_bpm", 0), 3),
-            "Suggested":  tx_key if has_tx else suggested,
+            " ":        marker,
+            "#":        i + 1,
+            "Apply":    apply,
+            "Pattern":  cy.get("pattern_label", "—"),
+            "Start":    ms_to_timestamp(cy["start_ms"]),
+            "End":      ms_to_timestamp(cy["end_ms"]),
+            "Duration": ms_to_timestamp(cy["end_ms"] - cy["start_ms"]),
+            "BPM":      round(cy.get("bpm", 0), 1),
+            "Span":     round(m.get("span", 0), 1),
+            "Centre":   round(m.get("mean_pos", 50), 1),
+            "Velocity": round(m.get("mean_velocity", 0), 3),
+            "CV BPM":   round(m.get("cv_bpm", 0), 3),
+            "Transform": tx_key if has_tx else suggested,
         })
 
     df = pd.DataFrame(rows)
 
-    sel = st.dataframe(
+    _READ_ONLY = [" ", "#", "Pattern", "Start", "End", "Duration",
+                  "BPM", "Span", "Centre", "Velocity", "CV BPM", "Transform"]
+
+    edited = st.data_editor(
         df,
         hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
         key=f"pe_instance_table_{selected_label}",
+        disabled=_READ_ONLY,
         column_config={
-            " ":        st.column_config.TextColumn(width="small"),
-            "#":        st.column_config.NumberColumn(width="small"),
-            "Pattern":  st.column_config.TextColumn(width="medium"),
-            "Start":    st.column_config.TextColumn(width="small"),
-            "End":      st.column_config.TextColumn(width="small"),
-            "Duration": st.column_config.TextColumn(width="small"),
-            "BPM":      st.column_config.NumberColumn(width="small"),
-            "Span":     st.column_config.NumberColumn(width="small"),
-            "Centre":   st.column_config.NumberColumn(width="small"),
-            "Velocity": st.column_config.NumberColumn(width="small", format="%.3f"),
-            "CV BPM":   st.column_config.NumberColumn(width="small", format="%.3f"),
-            "Suggested":st.column_config.TextColumn(width="medium"),
+            " ":         st.column_config.TextColumn(width="small"),
+            "#":         st.column_config.NumberColumn(width="small"),
+            "Apply":     st.column_config.CheckboxColumn("Apply", default=True, width="small"),
+            "Pattern":   st.column_config.TextColumn(width="medium"),
+            "Start":     st.column_config.TextColumn(width="small"),
+            "End":       st.column_config.TextColumn(width="small"),
+            "Duration":  st.column_config.TextColumn(width="small"),
+            "BPM":       st.column_config.NumberColumn(width="small"),
+            "Span":      st.column_config.NumberColumn(width="small"),
+            "Centre":    st.column_config.NumberColumn(width="small"),
+            "Velocity":  st.column_config.NumberColumn(width="small", format="%.3f"),
+            "CV BPM":    st.column_config.NumberColumn(width="small", format="%.3f"),
+            "Transform": st.column_config.TextColumn(width="medium"),
         },
     )
 
-    sel_rows = sel.selection.get("rows", []) if sel and hasattr(sel, "selection") else []
-    if sel_rows and sel_rows[0] != phrase_idx:
-        st.session_state.pe_selected_instance = sel_rows[0]
-        st.rerun(scope="app")
+    # Persist Apply states so _build_all_transforms can read them
+    for i, row in edited.iterrows():
+        st.session_state[f"pe_apply_{selected_label}_{i}"] = bool(row["Apply"])
 
 
 # ------------------------------------------------------------------
@@ -760,6 +763,8 @@ def _build_all_transforms(
     result = copy.deepcopy(original_actions)
 
     for i, cycle in enumerate(cycles):
+        if not st.session_state.get(f"pe_apply_{selected_label}_{i}", True):
+            continue
         stored = st.session_state.get(f"pe_transform_{selected_label}_{i}", {})
         tx_key = stored.get("transform_key")
         if not tx_key or tx_key == "passthrough":
