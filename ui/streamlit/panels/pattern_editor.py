@@ -1,19 +1,20 @@
-"""pattern_editor.py — Pattern-type batch editor.
+"""pattern_editor.py — Behavioral pattern editor.
+
+Phrases are classified into behavioral tags (stingy, giggle, drone, …)
+by assessment/classifier.py.  This tab lets you:
+  1. Select a tag to see all matching phrases.
+  2. Pick one phrase instance and apply a transform (with live preview).
+  3. Apply the same transform to all matching phrases at once.
+  4. Download the fully edited funscript.
 
 Layout
 ------
-[Left 1/5]: Pattern type buttons (one per unique label, shows instance count)
+[Left 1/5]: Behavioral tag buttons with match counts + suggested transform
 [Right 4/5]:
-  - Subheader: "Pattern: {label} — N instances"
-  - Selector chart (height=160): full funscript, all instances as orange vrects,
-    selected instance brighter, each labeled #1 #2 etc.
-  - Instance buttons: row of small buttons (max 8 per row), checkmark prefix if
-    transform set, "primary" type if selected
-  - [Divider if instance selected]
-  - Three-column detail: [original chart (2) | preview chart (2) | controls+buttons (1)]
-    - Controls col: transform selectbox, param sliders, Apply-to-all, prev/next,
-      divider, finalize expander, download button
-    - Both charts show the cycle window only (start_ms to end_ms)
+  - Subheader + tag description
+  - Selector chart: full funscript, matching phrases highlighted
+  - Instance buttons (one per matching phrase)
+  - Detail area: [original (2) | preview (2) | controls (1)]
 """
 
 from __future__ import annotations
@@ -33,72 +34,94 @@ import streamlit as st
 
 def render(project) -> None:
     """Render the Pattern Editor tab."""
+    from assessment.classifier import TAGS
+
     if project is None or not project.is_loaded:
         st.info("Load and analyse a funscript first.")
         return
 
-    # Gather all patterns from assessment
     assessment_dict = project.assessment.to_dict()
-    raw_patterns: List[dict] = assessment_dict.get("patterns", [])
+    phrases: List[dict] = assessment_dict.get("phrases", [])
 
-    if not raw_patterns:
-        st.info("No patterns detected in this funscript.")
+    if not phrases:
+        st.info("No phrases detected — run the assessment first.")
         return
 
-    # Group cycles by pattern_label (multiple dicts may share the same label)
-    grouped: Dict[str, List[dict]] = {}
-    for pat in raw_patterns:
-        label = pat.get("pattern_label", "unknown")
-        cycles = pat.get("cycles", [])
-        if label not in grouped:
-            grouped[label] = []
-        grouped[label].extend(cycles)
+    # Group phrases by behavioral tag
+    tag_to_phrases: Dict[str, List[dict]] = {}
+    for ph in phrases:
+        for tag in ph.get("tags", []):
+            tag_to_phrases.setdefault(tag, []).append(ph)
 
-    # Sorted list of unique labels
-    labels = sorted(grouped.keys())
+    # Order tags by count descending; preserve TAGS registry order within same count
+    tag_order = sorted(
+        [t for t in TAGS if t in tag_to_phrases],
+        key=lambda t: -len(tag_to_phrases[t]),
+    )
+    # Phrases with no tags at all → show an "unclassified" group
+    unclassified = [ph for ph in phrases if not ph.get("tags")]
+    if unclassified:
+        tag_to_phrases["unclassified"] = unclassified
+        tag_order.append("unclassified")
 
-    # Session state defaults
-    if "pe_selected_label" not in st.session_state or st.session_state.pe_selected_label not in labels:
-        st.session_state.pe_selected_label = labels[0] if labels else None
+    if not tag_order:
+        st.success("No behavioral issues detected in any phrase.")
+        return
+
+    # Session state
+    valid_tags = tag_order
+    if "pe_selected_label" not in st.session_state or st.session_state.pe_selected_label not in valid_tags:
+        st.session_state.pe_selected_label = valid_tags[0]
     if "pe_selected_instance" not in st.session_state:
         st.session_state.pe_selected_instance = 0
 
-    selected_label: Optional[str] = st.session_state.pe_selected_label
+    selected_tag: str  = st.session_state.pe_selected_label
     funscript_path: str = project.funscript_path
-    duration_ms: int = project.assessment.duration_ms
+    duration_ms: int   = project.assessment.duration_ms
 
-    # Two-column layout: left type buttons | right detail
-    col_types, col_detail = st.columns([1, 4])
+    col_tags, col_detail = st.columns([1, 4])
 
-    with col_types:
-        st.markdown("**Pattern Types**")
-        for lbl in labels:
-            count = len(grouped[lbl])
-            is_active = lbl == selected_label
+    # Catalog stats (best-effort — catalog may be empty)
+    catalog = st.session_state.get("pattern_catalog")
+    catalog_stats = catalog.get_tag_stats() if catalog else {}
+
+    with col_tags:
+        st.markdown("**Behavioral tags**")
+        for tag in tag_order:
+            meta  = TAGS.get(tag)
+            count = len(tag_to_phrases[tag])
+            label = meta.label if meta else tag.replace("_", " ").title()
+            cat   = catalog_stats.get(tag, {})
+            total = cat.get("count", 0)
+            files = cat.get("funscripts", 0)
+            hint_parts = []
+            if meta:
+                hint_parts.append(f"Suggested: {meta.suggested_transform}")
+            if total:
+                hint_parts.append(f"Catalog: {total} phrases in {files} file{'s' if files != 1 else ''}")
+            is_active = (tag == selected_tag)
             if st.button(
-                f"{lbl}\n({count})",
-                key=f"pe_type_{lbl}",
+                f"{label}  ·  {count}",
+                key=f"pe_tag_{tag}",
                 type="primary" if is_active else "secondary",
                 use_container_width=True,
+                help="  |  ".join(hint_parts) if hint_parts else None,
             ):
-                if lbl != st.session_state.pe_selected_label:
-                    st.session_state.pe_selected_label = lbl
+                if tag != selected_tag:
+                    st.session_state.pe_selected_label   = tag
                     st.session_state.pe_selected_instance = 0
                     st.rerun(scope="app")
 
     with col_detail:
-        if selected_label is None:
-            st.info("Select a pattern type on the left.")
-            return
-
-        cycles = grouped[selected_label]
-        phrase_idx = min(st.session_state.pe_selected_instance, len(cycles) - 1)
+        matching = tag_to_phrases[selected_tag]
+        phrase_idx = min(st.session_state.pe_selected_instance, len(matching) - 1)
         st.session_state.pe_selected_instance = phrase_idx
 
+        # The detail fragment treats each matching phrase as one "cycle" window
         _detail_fragment(
             funscript_path=funscript_path,
-            selected_label=selected_label,
-            cycles=cycles,
+            selected_label=selected_tag,
+            cycles=matching,      # each phrase dict has start_ms / end_ms
             phrase_idx=phrase_idx,
             duration_ms=duration_ms,
         )
@@ -119,8 +142,26 @@ def _detail_fragment(
 ) -> None:
     from pattern_catalog.phrase_transforms import TRANSFORM_CATALOG
 
+    from assessment.classifier import TAGS
     n_instances = len(cycles)
-    st.subheader(f"Pattern: {selected_label} — {n_instances} instance{'s' if n_instances != 1 else ''}")
+    meta = TAGS.get(selected_label)
+    display_name = meta.label if meta else selected_label.replace("_", " ").title()
+    st.subheader(f"{display_name}  ·  {n_instances} phrase{'s' if n_instances != 1 else ''}")
+    if meta:
+        st.caption(meta.description)
+        st.caption(f"Suggested fix: **{meta.suggested_transform}** — {meta.fix_hint}")
+
+    # Catalog context for this tag
+    catalog = st.session_state.get("pattern_catalog")
+    if catalog:
+        cs = catalog.get_tag_stats().get(selected_label, {})
+        if cs.get("count", 0) > 0:
+            st.caption(
+                f"Catalog: **{cs['count']}** phrases tagged *{display_name}* "
+                f"across **{cs['funscripts']}** file{'s' if cs['funscripts'] != 1 else ''} — "
+                f"typical BPM {cs['bpm_min']}–{cs['bpm_max']} "
+                f"· span {cs['span_min']}–{cs['span_max']}"
+            )
 
     # Load original actions once for the whole fragment
     with open(funscript_path) as f:
