@@ -75,6 +75,16 @@ class FunscriptAnalyzer:
         phrases = self._detect_phrases(patterns)
         bpm_transitions = self._detect_bpm_transitions(phrases)
 
+        # Behavioral classification — adds "tags" and "metrics" to each phrase dict
+        from assessment.classifier import annotate_phrases
+        phrase_dicts = [p.to_dict() for p in phrases]
+        cycle_dicts  = [c.to_dict() for c in sum([p.cycles for p in patterns], [])]
+        annotate_phrases(phrase_dicts, cycle_dicts, self._actions)
+        # Store annotations back onto the Phrase objects
+        for phrase, pd in zip(phrases, phrase_dicts):
+            phrase.tags    = pd.get("tags", [])
+            phrase.metrics = pd.get("metrics", {})
+
         return AssessmentResult(
             source_file=self._source_file,
             analyzed_at=datetime.now().isoformat(),
