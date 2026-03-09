@@ -191,30 +191,13 @@ def _detail_fragment(
     )
 
     # ------------------------------------------------------------------
-    # Instance buttons
+    # Instance table — click a row to select that phrase
     # ------------------------------------------------------------------
-    MAX_PER_ROW = 8
-    rows = [cycles[i : i + MAX_PER_ROW] for i in range(0, n_instances, MAX_PER_ROW)]
-    row_offsets = list(range(0, n_instances, MAX_PER_ROW))
-
-    for row_cycles, row_start in zip(rows, row_offsets):
-        btn_cols = st.columns(len(row_cycles))
-        for col, (i_rel, cyc) in zip(btn_cols, enumerate(row_cycles)):
-            inst_idx = row_start + i_rel
-            has_tx = _instance_has_transform(selected_label, inst_idx)
-            label_prefix = "✓ " if has_tx else ""
-            btn_label = f"{label_prefix}#{inst_idx + 1}"
-            is_sel = inst_idx == phrase_idx
-            with col:
-                if st.button(
-                    btn_label,
-                    key=f"pe_inst_{selected_label}_{inst_idx}",
-                    type="primary" if is_sel else "secondary",
-                    use_container_width=True,
-                ):
-                    if inst_idx != phrase_idx:
-                        st.session_state.pe_selected_instance = inst_idx
-                        st.rerun(scope="app")
+    _render_instance_table(
+        cycles=cycles,
+        selected_label=selected_label,
+        phrase_idx=phrase_idx,
+    )
 
     # ------------------------------------------------------------------
     # Detail editor for the selected instance
@@ -284,6 +267,78 @@ def _detail_fragment(
             original_actions=original_actions,
             funscript_path=funscript_path,
         )
+
+
+# ------------------------------------------------------------------
+# Instance table
+# ------------------------------------------------------------------
+
+
+def _render_instance_table(
+    cycles: List[dict],
+    selected_label: str,
+    phrase_idx: int,
+) -> None:
+    """Render a selectable dataframe of all phrase instances for the active tag."""
+    import pandas as pd
+    from assessment.classifier import TAGS
+    from utils import ms_to_timestamp
+
+    meta = TAGS.get(selected_label)
+    suggested = meta.suggested_transform if meta else "—"
+
+    rows = []
+    for i, cy in enumerate(cycles):
+        m   = cy.get("metrics", {})
+        stored  = st.session_state.get(f"pe_transform_{selected_label}_{i}", {})
+        tx_key  = stored.get("transform_key", "")
+        has_tx  = bool(tx_key and tx_key != "passthrough")
+        # Mark selected row with an arrow so it's visible after navigation
+        marker  = "▶" if i == phrase_idx else ("✓" if has_tx else "")
+        rows.append({
+            " ":          marker,
+            "#":          i + 1,
+            "Pattern":    cy.get("pattern_label", "—"),
+            "Start":      ms_to_timestamp(cy["start_ms"]),
+            "End":        ms_to_timestamp(cy["end_ms"]),
+            "Duration":   ms_to_timestamp(cy["end_ms"] - cy["start_ms"]),
+            "BPM":        round(cy.get("bpm", 0), 1),
+            "Span":       round(m.get("span", 0), 1),
+            "Centre":     round(m.get("mean_pos", 50), 1),
+            "Velocity":   round(m.get("mean_velocity", 0), 3),
+            "CV BPM":     round(m.get("cv_bpm", 0), 3),
+            "Suggested":  tx_key if has_tx else suggested,
+        })
+
+    df = pd.DataFrame(rows)
+
+    sel = st.dataframe(
+        df,
+        hide_index=True,
+        use_container_width=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        key=f"pe_instance_table_{selected_label}",
+        column_config={
+            " ":        st.column_config.TextColumn(width="small"),
+            "#":        st.column_config.NumberColumn(width="small"),
+            "Pattern":  st.column_config.TextColumn(width="medium"),
+            "Start":    st.column_config.TextColumn(width="small"),
+            "End":      st.column_config.TextColumn(width="small"),
+            "Duration": st.column_config.TextColumn(width="small"),
+            "BPM":      st.column_config.NumberColumn(width="small"),
+            "Span":     st.column_config.NumberColumn(width="small"),
+            "Centre":   st.column_config.NumberColumn(width="small"),
+            "Velocity": st.column_config.NumberColumn(width="small", format="%.3f"),
+            "CV BPM":   st.column_config.NumberColumn(width="small", format="%.3f"),
+            "Suggested":st.column_config.TextColumn(width="medium"),
+        },
+    )
+
+    sel_rows = sel.selection.get("rows", []) if sel and hasattr(sel, "selection") else []
+    if sel_rows and sel_rows[0] != phrase_idx:
+        st.session_state.pe_selected_instance = sel_rows[0]
+        st.rerun(scope="app")
 
 
 # ------------------------------------------------------------------
