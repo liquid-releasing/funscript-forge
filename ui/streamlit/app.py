@@ -35,6 +35,7 @@ from ui.common.view_state import ViewState
 from ui.common.work_items import ItemType, WorkItem
 from ui.streamlit.panels import assessment as assessment_panel
 from ui.streamlit.panels import assessment_nav as assessment_nav_panel
+from ui.streamlit.panels import catalog_view as catalog_view_panel
 from ui.streamlit.panels import detail as detail_panel
 from ui.streamlit.panels import pattern_editor as pattern_editor_panel
 from ui.streamlit.panels import viewer as viewer_panel
@@ -60,6 +61,11 @@ if "project" not in st.session_state:
 
 if "output_dir" not in st.session_state:
     st.session_state.output_dir = os.path.join(_ROOT, "output")
+
+if "pattern_catalog" not in st.session_state:
+    from catalog.pattern_catalog import PatternCatalog
+    _catalog_path = os.path.join(_ROOT, "output", "pattern_catalog.json")
+    st.session_state.pattern_catalog = PatternCatalog(_catalog_path)
 
 if "view_state" not in st.session_state:
     st.session_state.view_state = ViewState()
@@ -177,6 +183,21 @@ def _sidebar() -> None:
             st.session_state.last_loaded_cfg  = cfg_key
             st.session_state.last_loaded_file = selected_file
             st.session_state.view_state       = ViewState()
+
+            # Auto-update the pattern catalog with this funscript's tagged phrases
+            try:
+                _proj    = st.session_state.project
+                _phrases = _proj.assessment.to_dict().get("phrases", [])
+                _cat     = st.session_state.pattern_catalog
+                _cat.add_assessment(
+                    funscript_name=selected_file,
+                    phrases=_phrases,
+                    duration_ms=_proj.assessment.duration_ms,
+                )
+                _cat.save()
+            except Exception:
+                pass  # catalog update is best-effort; never block the UI
+
         st.rerun()
 
     st.sidebar.markdown("---")
@@ -274,8 +295,8 @@ def _main() -> None:
         )
         return
 
-    tab_viewer, tab_assessment, tab_nav, tab_work_items, tab_edit, tab_pattern, tab_export = st.tabs(
-        ["Phrase Selector", "Assessment", "Navigator", "Work Items", "Edit", "Pattern Editor", "Export"]
+    tab_viewer, tab_assessment, tab_nav, tab_work_items, tab_edit, tab_pattern, tab_catalog, tab_export = st.tabs(
+        ["Phrase Selector", "Assessment", "Navigator", "Work Items", "Edit", "Pattern Editor", "Catalog", "Export"]
     )
 
     with tab_viewer:
@@ -296,6 +317,9 @@ def _main() -> None:
 
     with tab_pattern:
         pattern_editor_panel.render(project)
+
+    with tab_catalog:
+        catalog_view_panel.render(project)
 
     with tab_export:
         _render_export_tab(project)
