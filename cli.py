@@ -359,10 +359,15 @@ def cmd_phrase_transform(args):
         end   = ph["end_ms"]
         slice_ = [a for a in result if start <= a["at"] <= end]
         transformed = spec.apply(slice_, params)
-        t_map = {a["at"]: a["pos"] for a in transformed}
-        for a in result:
-            if a["at"] in t_map:
-                a["pos"] = t_map[a["at"]]
+        if spec.structural:
+            # Replace the phrase slice with the new (potentially shorter) actions
+            result = [a for a in result if not (start <= a["at"] <= end)]
+            result = sorted(result + transformed, key=lambda a: a["at"])
+        else:
+            t_map = {a["at"]: a["pos"] for a in transformed}
+            for a in result:
+                if a["at"] in t_map:
+                    a["pos"] = t_map[a["at"]]
 
     # --- save ---
     data["actions"] = result
@@ -486,7 +491,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_pt.add_argument("--output", help="Path for output .funscript (default: *_phrase_transformed.funscript)")
     p_pt.add_argument(
         "--transform", metavar="KEY",
-        help=f"Transform to apply. One of: {', '.join(['passthrough','amplitude_scale','normalize','smooth','clamp_upper','clamp_lower','invert','boost_contrast'])}",
+        help=f"Transform to apply. One of: {', '.join(['passthrough','amplitude_scale','normalize','smooth','clamp_upper','clamp_lower','invert','boost_contrast','shift','recenter','halve_tempo'])}",
     )
     p_pt.add_argument(
         "--phrase", type=int, metavar="N", action="append",

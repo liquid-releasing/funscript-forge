@@ -18,6 +18,7 @@ from pattern_catalog.phrase_transforms import (
     PhraseTransform,
     TransformParam,
     suggest_transform,
+    _find_extrema,
 )
 
 
@@ -39,6 +40,9 @@ _EXPECTED_KEYS = {
     "clamp_lower",
     "invert",
     "boost_contrast",
+    "shift",
+    "recenter",
+    "halve_tempo",
 }
 
 _PHRASE_HIGH_BPM = {"bpm": 150.0, "pattern_label": "regular", "amplitude_span": 80}
@@ -268,12 +272,15 @@ class TestApplyContract(unittest.TestCase):
                 self.assertEqual(result, [])
 
     def test_apply_param_defaults_used_when_param_values_empty(self):
-        """apply({}) should not raise — defaults fill in missing keys."""
+        """apply({}) should not raise — defaults fill in missing keys.
+        Structural transforms may return fewer actions so we skip the length check."""
         actions = _actions([10, 50, 90])
         for key, spec in TRANSFORM_CATALOG.items():
             with self.subTest(transform=key):
                 result = spec.apply(actions, {})
-                self.assertEqual(len(result), len(actions))
+                self.assertIsInstance(result, list)
+                if not spec.structural:
+                    self.assertEqual(len(result), len(actions))
 
     def test_apply_returns_list(self):
         actions = _actions([25, 75])
@@ -480,6 +487,203 @@ class TestReadmeExamples(unittest.TestCase):
         positions = [a["pos"] for a in result]
         self.assertEqual(min(positions), 20)
         self.assertEqual(max(positions), 80)
+
+
+class TestShift(unittest.TestCase):
+
+    def test_positive_offset_moves_up(self):
+        actions = _actions([20, 50, 80])
+        result = TRANSFORM_CATALOG["shift"].apply(actions, {"offset": 10})
+        self.assertEqual([a["pos"] for a in result], [30, 60, 90])
+
+    def test_negative_offset_moves_down(self):
+        actions = _actions([20, 50, 80])
+        result = TRANSFORM_CATALOG["shift"].apply(actions, {"offset": -10})
+        self.assertEqual([a["pos"] for a in result], [10, 40, 70])
+
+    def test_zero_offset_is_identity(self):
+        actions = _actions([20, 50, 80])
+        result = TRANSFORM_CATALOG["shift"].apply(actions, {"offset": 0})
+        self.assertEqual([a["pos"] for a in result], [20, 50, 80])
+
+    def test_clamped_at_boundaries(self):
+        actions = _actions([10, 90])
+        result = TRANSFORM_CATALOG["shift"].apply(actions, {"offset": 50})
+        for a in result:
+            self.assertGreaterEqual(a["pos"], 0)
+            self.assertLessEqual(a["pos"], 100)
+        self.assertEqual(result[1]["pos"], 100)  # 90+50 clamped
+
+    def test_amplitude_preserved_within_bounds(self):
+        """When shift doesn't hit a wall, amplitude span is unchanged."""
+        actions = _actions([20, 80])  # span = 60
+        result = TRANSFORM_CATALOG["shift"].apply(actions, {"offset": 5})
+        span = result[1]["pos"] - result[0]["pos"]
+        self.assertEqual(span, 60)
+
+    def test_does_not_mutate_input(self):
+        actions = _actions([30, 70])
+        original = [a["pos"] for a in actions]
+        TRANSFORM_CATALOG["shift"].apply(actions, {"offset": 20})
+        self.assertEqual([a["pos"] for a in actions], original)
+
+
+class TestRecenter(unittest.TestCase):
+
+    def test_centers_at_target(self):
+        """After recenter, (min+max)/2 should equal target_center (within rounding)."""
+        actions = _actions([20, 80])  # midpoint = 50
+        result = TRANSFORM_CATALOG["recenter"].apply(actions, {"target_center": 70})
+        lo = min(a["pos"] for a in result)
+        hi = max(a["pos"] for a in result)
+        self.assertAlmostEqual((lo + hi) / 2, 70, delta=1)
+
+    def test_amplitude_span_unchanged(self):
+        actions = _actions([20, 80])  # span = 60
+        result = TRANSFORM_CATALOG["recenter"].apply(actions, {"target_center": 30})
+        lo = min(a["pos"] for a in result)
+        hi = max(a["pos"] for a in result)
+        self.assertAlmostEqual(hi - lo, 60, delta=1)
+
+    def test_already_centered_is_identity(self):
+        actions = _actions([20, 80])  # midpoint = 50
+        result = TRANSFORM_CATALOG["recenter"].apply(actions, {"target_center": 50})
+        self.assertEqual([a["pos"] for a in result], [20, 80])
+
+    def test_clamped_at_boundaries(self):
+        actions = _actions([0, 100])  # full range, midpoint=50
+        result = TRANSFORM_CATALOG["recenter"].apply(actions, {"target_center": 80})
+        for a in result:
+            self.assertGreaterEqual(a["pos"], 0)
+            self.assertLessEqual(a["pos"], 100)
+
+    def test_empty_actions(self):
+        result = TRANSFORM_CATALOG["recenter"].apply([], {"target_center": 50})
+        self.assertEqual(result, [])
+
+    def test_does_not_mutate_input(self):
+        actions = _actions([30, 70])
+        original = [a["pos"] for a in actions]
+        TRANSFORM_CATALOG["recenter"].apply(actions, {"target_center": 70})
+        self.assertEqual([a["pos"] for a in actions], original)
+
+
+# ---------------------------------------------------------------------------
+# _find_extrema helper
+# ---------------------------------------------------------------------------
+
+class TestFindExtrema(unittest.TestCase):
+
+    def test_single_peak(self):
+        actions = _actions([0, 100, 0])
+        idx = _find_extrema(actions, min_prominence=10)
+        self.assertIn(1, idx)  # peak at index 1
+
+    def test_always_includes_first_and_last(self):
+        actions = _actions([50, 60, 50, 60, 50])
+        idx = _find_extrema(actions)
+        self.assertEqual(idx[0], 0)
+        self.assertEqual(idx[-1], len(actions) - 1)
+
+    def test_noise_below_prominence_excluded(self):
+        # Tiny 3-unit wobble should not count as an extremum
+        actions = _actions([50, 53, 50, 53, 50])
+        idx = _find_extrema(actions, min_prominence=10)
+        # Only first and last should survive
+        self.assertEqual(set(idx), {0, len(actions) - 1})
+
+    def test_short_list_under_3_returns_all(self):
+        """Lists with fewer than 3 actions return all indices."""
+        for n in range(1, 3):
+            actions = _actions(list(range(n)))
+            idx = _find_extrema(actions)
+            self.assertEqual(len(idx), n)
+
+    def test_3_action_peak_detected(self):
+        """A 3-action list with a clear peak includes the middle index."""
+        actions = _actions([0, 100, 0])
+        idx = _find_extrema(actions, min_prominence=10)
+        self.assertIn(1, idx)
+
+
+# ---------------------------------------------------------------------------
+# halve_tempo structural transform
+# ---------------------------------------------------------------------------
+
+class TestHalveTempo(unittest.TestCase):
+    """Tests for the halve_tempo structural transform."""
+
+    def _wave(self, cycles=4, period_ms=100):
+        """Generate a clean square-ish wave with `cycles` full up-down cycles."""
+        actions = []
+        for c in range(cycles):
+            t = c * period_ms
+            actions.append({"at": t,                  "pos": 0})
+            actions.append({"at": t + period_ms // 2, "pos": 100})
+        actions.append({"at": cycles * period_ms, "pos": 0})
+        return actions
+
+    def test_structural_flag_set(self):
+        spec = TRANSFORM_CATALOG["halve_tempo"]
+        self.assertTrue(spec.structural)
+
+    def test_returns_fewer_actions(self):
+        """Should produce fewer actions than input (temporal decimation)."""
+        actions = self._wave(cycles=4)
+        result = TRANSFORM_CATALOG["halve_tempo"].apply(actions)
+        self.assertLess(len(result), len(actions))
+
+    def test_preserves_phrase_time_window(self):
+        """First and last timestamps must match original phrase boundaries."""
+        actions = self._wave(cycles=4)
+        result = TRANSFORM_CATALOG["halve_tempo"].apply(actions)
+        self.assertEqual(result[0]["at"], actions[0]["at"])
+        self.assertEqual(result[-1]["at"], actions[-1]["at"])
+
+    def test_timestamps_sorted(self):
+        """Output must be in ascending time order."""
+        actions = self._wave(cycles=4)
+        result = TRANSFORM_CATALOG["halve_tempo"].apply(actions)
+        times = [a["at"] for a in result]
+        self.assertEqual(times, sorted(times))
+
+    def test_positions_in_range(self):
+        """All output positions must be 0–100."""
+        actions = self._wave(cycles=4)
+        result = TRANSFORM_CATALOG["halve_tempo"].apply(actions)
+        for a in result:
+            self.assertGreaterEqual(a["pos"], 0)
+            self.assertLessEqual(a["pos"], 100)
+
+    def test_amplitude_scale_param(self):
+        """amplitude_scale=0.5 should compress stroke depth around 50."""
+        actions = self._wave(cycles=4)
+        normal = TRANSFORM_CATALOG["halve_tempo"].apply(actions, {"amplitude_scale": 1.0})
+        scaled = TRANSFORM_CATALOG["halve_tempo"].apply(actions, {"amplitude_scale": 0.5})
+        normal_range = max(a["pos"] for a in normal) - min(a["pos"] for a in normal)
+        scaled_range = max(a["pos"] for a in scaled) - min(a["pos"] for a in scaled)
+        self.assertLessEqual(scaled_range, normal_range)
+
+    def test_short_phrase_passthrough(self):
+        """Phrases with fewer than 4 actions are returned unchanged."""
+        actions = _actions([0, 100, 0])
+        result = TRANSFORM_CATALOG["halve_tempo"].apply(actions)
+        self.assertEqual(len(result), len(actions))
+
+    def test_does_not_mutate_input(self):
+        actions = self._wave(cycles=4)
+        original = [{"at": a["at"], "pos": a["pos"]} for a in actions]
+        TRANSFORM_CATALOG["halve_tempo"].apply(actions)
+        self.assertEqual(actions, original)
+
+    def test_readme_example_halve_tempo(self):
+        """CLI README: --transform halve_tempo --all"""
+        actions = self._wave(cycles=6)
+        result = TRANSFORM_CATALOG["halve_tempo"].apply(actions)
+        # Result should have fewer actions and same time window
+        self.assertLess(len(result), len(actions))
+        self.assertEqual(result[0]["at"], actions[0]["at"])
+        self.assertEqual(result[-1]["at"], actions[-1]["at"])
 
 
 if __name__ == "__main__":
