@@ -112,6 +112,8 @@ class Phrase:
     cycle_count: int
     description: str
     oscillation_count: int = 0  # total up-down pairs across all cycles in this phrase
+    tags: list = field(default_factory=list)    # behavioral tag keys, e.g. ["stingy", "drone"]
+    metrics: dict = field(default_factory=dict)  # computed metrics from classifier
 
     @property
     def start_ts(self) -> str:
@@ -139,15 +141,20 @@ class Phrase:
             "pattern_label": self.pattern_label,
             "cycle_count": self.cycle_count,
             "description": self.description,
+            "tags": list(self.tags),
+            "metrics": dict(self.metrics),
         }
 
     @classmethod
     def from_dict(cls, d: dict) -> "Phrase":
-        return cls(
+        obj = cls(
             d["start_ms"], d["end_ms"],
             d["pattern_label"], d["cycle_count"], d["description"],
             d.get("oscillation_count", 0),
         )
+        obj.tags    = d.get("tags", [])
+        obj.metrics = d.get("metrics", {})
+        return obj
 
 
 @dataclass
