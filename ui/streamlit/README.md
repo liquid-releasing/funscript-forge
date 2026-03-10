@@ -66,7 +66,7 @@ Full-funscript chart with phrase bounding boxes. When phrase transforms have bee
 ```
 
 - **✓ Accept** — stores the transform in session state and returns to the phrase selector (transforms persist until Cancel or re-analysis).
-- **✕ Cancel** — discards all stored transforms and returns to the selector.
+- **✕ Cancel** — discards only the current phrase's proposed transform and returns to the selector. Transforms accepted on other phrases are unaffected. Use the 🗑 button on the Export tab to revert individual accepted transforms.
 - **✂ Split phrase** — divides the current phrase into two at a cycle boundary.
 
   **How to split:**
