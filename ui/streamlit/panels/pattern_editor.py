@@ -452,12 +452,40 @@ def _detail_fragment(
             funscript_path=funscript_path,
         )
 
-    # Media player (#2.4) — cued to this instance's start time
-    from ui.streamlit.panels.media_player import render_player
-    render_player(
-        start_ms=start_ms,
-        key_suffix=f"pe_{selected_label}_{inst_idx}",
-    )
+    # Phrase-restricted audio player — restricted to [start_ms, end_ms]
+    _media_path = st.session_state.get("media_path")
+    if _media_path and os.path.exists(_media_path):
+        from ui.streamlit.panels.media_player import AUDIO_EXTS
+        _ext = os.path.splitext(_media_path)[1].lower()
+        if _ext in AUDIO_EXTS:
+            import base64
+            from ui.streamlit.components.audio_player import phrase_audio_player
+            from ui.streamlit.panels.media_player import _read_media_bytes
+
+            _mime_map = {
+                ".mp3": "audio/mpeg", ".m4a": "audio/mp4",
+                ".wav": "audio/wav",  ".ogg": "audio/ogg", ".aac": "audio/aac",
+            }
+            _mime       = _mime_map.get(_ext, "audio/mpeg")
+            _audio_hash = f"{_media_path}:{os.path.getmtime(_media_path)}"
+            _raw        = _read_media_bytes(_media_path, os.path.getmtime(_media_path))
+            _b64        = base64.b64encode(_raw).decode()
+            _split_pts  = _get_splits(selected_label, inst_idx)
+
+            _player_result = phrase_audio_player(
+                audio_b64=_b64,
+                audio_mime=_mime,
+                audio_hash=_audio_hash,
+                start_ms=start_ms,
+                end_ms=end_ms,
+                actions=[{"at": a["at"], "pos": a["pos"]} for a in original_window],
+                split_points=_split_pts,
+                key=f"ap_{selected_label}_{inst_idx}",
+            )
+            if _player_result and "split_ms" in _player_result:
+                _split_ms = int(_player_result["split_ms"])
+                if _add_split_point(selected_label, inst_idx, cycle, _split_ms):
+                    st.rerun(scope="app")
 
 
 # ------------------------------------------------------------------

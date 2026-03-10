@@ -30,37 +30,76 @@ def _read_media_bytes(path: str, _mtime: float) -> bytes:
         return f.read()
 
 
-def render_player(start_ms: int, key_suffix: str = "") -> None:
-    """Render an audio/video player cued to *start_ms* if a media file is loaded.
+def render_player(
+    start_ms: int,
+    end_ms: int | None = None,
+    actions: list | None = None,
+    key_suffix: str = "",
+) -> dict | None:
+    """Render an audio player cued to the phrase [start_ms, end_ms].
 
-    If no media file is in session state, renders nothing.
+    For audio files, renders the interactive phrase-restricted player with
+    playhead chart, play/stop/back/forward controls, and a 📌 split-pin button.
+    For video files, falls back to ``st.video()`` cued to start_ms.
+
+    Returns the component return value (``{"split_ms": int}`` when pinned) or
+    ``None``.  The return value is only meaningful for audio.
 
     Parameters
     ----------
     start_ms:
-        Phrase start time in milliseconds.  The player seeks to this position.
+        Phrase start in milliseconds.
+    end_ms:
+        Phrase end in milliseconds.  Required for the interactive player;
+        if omitted, the audio plays from start_ms with no enforced end.
+    actions:
+        List of ``{"at": int, "pos": int}`` for the phrase chart.  If
+        omitted, the chart renders empty.
     key_suffix:
-        Unique suffix appended to Streamlit widget keys to avoid collisions
-        when the player is rendered in multiple locations on the same page.
+        Unique suffix for Streamlit widget keys.
     """
+    import base64
+
     media_path: str | None = st.session_state.get("media_path")
     if not media_path or not os.path.exists(media_path):
-        return
+        return None
 
     ext = os.path.splitext(media_path)[1].lower()
     if ext not in MEDIA_EXTS:
-        return
+        return None
 
+    if ext in AUDIO_EXTS and end_ms is not None:
+        # Interactive phrase-restricted player
+        from ui.streamlit.components.audio_player import phrase_audio_player
+
+        _mime_map = {
+            ".mp3": "audio/mpeg", ".m4a": "audio/mp4",
+            ".wav": "audio/wav",  ".ogg": "audio/ogg", ".aac": "audio/aac",
+        }
+        mime       = _mime_map.get(ext, "audio/mpeg")
+        audio_hash = f"{media_path}:{os.path.getmtime(media_path)}"
+        raw        = _read_media_bytes(media_path, os.path.getmtime(media_path))
+        b64        = base64.b64encode(raw).decode()
+
+        return phrase_audio_player(
+            audio_b64=b64,
+            audio_mime=mime,
+            audio_hash=audio_hash,
+            start_ms=start_ms,
+            end_ms=end_ms,
+            actions=actions or [],
+            split_points=[],
+            key=f"player_{key_suffix}",
+        )
+
+    # Fallback: simple st.audio / st.video cued to start
     start_s = int(start_ms / 1000)
     file_size_mb = os.path.getsize(media_path) / 1_000_000
     label = f"▶ Media — {os.path.basename(media_path)} (cued to {_fmt_s(start_s)})"
 
     with st.expander(label, expanded=False):
         if file_size_mb > 200:
-            st.caption(
-                f"File is {file_size_mb:.0f} MB — loading may take a moment."
-            )
-
+            st.caption(f"File is {file_size_mb:.0f} MB — loading may take a moment.")
         try:
             media_bytes = _read_media_bytes(media_path, os.path.getmtime(media_path))
             if ext in AUDIO_EXTS:
@@ -69,6 +108,8 @@ def render_player(start_ms: int, key_suffix: str = "") -> None:
                 st.video(media_bytes, start_time=start_s)
         except Exception as exc:
             st.warning(f"Could not load media: {exc}")
+
+    return None
 
 
 def find_matching_media(funscript_path: str, uploads_dir: str) -> str | None:
