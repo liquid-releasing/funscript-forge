@@ -34,6 +34,9 @@ expressive performance sections, and gentle breaks.
 - Completed transforms (from Phrase Editor or Pattern Editor) listed with reject / restore per row
 - Recommended transforms (tag-aware auto-suggestions) listed separately; each must be explicitly accepted before it is included in the download
 - Optional post-processing: blend seams (bilateral LPF at high-velocity style boundaries) and final smooth (light global LPF)
+- **Output integrity** — all positions clamped to [0, 100] and timestamps sorted/deduplicated automatically; warning shown if any actions were clamped
+- **Export log** — every downloaded funscript contains a `_forge_log` key recording the transform name, parameters, source, and export timestamp for each change (reproducible sessions)
+- **Full pipeline export** — collapsible panel runs BPM Transformer + Window Customizer directly in the browser; result downloads as a separate `_pipeline.funscript` independent of phrase-editor transforms
 - Download builds the full result on demand
 
 **CLI**
@@ -42,7 +45,7 @@ expressive performance sections, and gentle breaks.
 - `finalize` — blend seams + final smooth as standalone post-processing
 - `export-plan` — mirror of the UI Export tab; supports `--apply` to write output directly
 - `catalog` — query and manage the cross-funscript pattern catalog
-- `test` — run all 511 tests
+- `test` — run all 498 tests
 
 ---
 
@@ -126,10 +129,19 @@ Click **Download edited funscript** to build and save the result.
 
 You can also query the same plan from the CLI — see `export-plan` below.
 
-### 4 — Transform and customize (CLI, UI integration coming soon)
+### 4 — Transform and customize
 
-Run the transformer and customizer from the CLI using the exported window
-files:
+After reviewing in the UI, run the full pipeline to produce the final funscript.
+
+#### Option A — in the browser (Export tab)
+
+Open the **Export** tab and expand **"Run full pipeline — BPM Transformer + Window Customizer"**.
+Adjust the BPM threshold and amplitude scale sliders, toggle whether to apply your Work Item
+windows, then click **▶ Run Pipeline**. Download the result with
+**⬇ Download pipeline result**.  This is independent of any phrase-editor transforms and
+produces a `_pipeline.funscript` file with an embedded `_forge_log`.
+
+#### Option B — command line
 
 ```bash
 # Step 1 — analyze (or use the UI; it saves a cached JSON automatically)
@@ -147,6 +159,9 @@ python cli.py customize output/transformed.funscript \
     --break output/input.break.json \
     --raw output/input.raw.json \
     --output output/final.funscript
+
+# Or run both steps at once
+python cli.py pipeline input.funscript --output-dir output/
 ```
 
 ---
@@ -200,6 +215,7 @@ funscript-forge/
 │   ├── common/               #   Framework-agnostic models and logic
 │   │   ├── work_items.py     #   WorkItem + ItemType
 │   │   ├── project.py        #   Project session state
+│   │   ├── pipeline.py       #   run_pipeline / run_pipeline_in_memory
 │   │   └── tests/
 │   ├── streamlit/            #   Streamlit app (local + cloud deployable)
 │   │   ├── app.py
@@ -267,13 +283,13 @@ python cli.py test
 ## Running tests
 
 ```bash
-# Core pipeline + UI-panel split logic (422 tests)
+# Core pipeline + integration tests (498 tests)
 python -m unittest discover -s tests -v
 
-# UI layer (60 tests)
+# UI layer
 python -m unittest discover -s ui/common/tests -v
 
-# All at once (482 tests)
+# All at once
 python cli.py test
 ```
 
