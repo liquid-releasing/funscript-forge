@@ -527,7 +527,7 @@ def _render_recommended(plan: List[dict]) -> None:
             # col 7 = edit
             if rc[7].button("✏", key=f"rec_edit_{idx}", help="Edit in Phrase Editor"):
                 st.session_state.view_state.set_selection(entry["start_ms"], entry["end_ms"])
-                st.session_state.goto_tab = 1
+                st.session_state.goto_tab = 0
                 st.rerun()
             # col 8 = reject
             if rc[8].button("🗑", key=f"rec_reject_{idx}", help="Reject"):

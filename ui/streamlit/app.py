@@ -9,17 +9,17 @@ Launch with:
 Layout
 ------
 Sidebar
-  • File picker (test_funscript/*.original.funscript)
-  • Assessment controls (run / load cached)
-  • Export buttons
+  • File picker (local path / recent files) or upload (web mode)
+  • Optional media file for context playback
+  • Phrase detection settings + Re-analyse
 
 Main area  (tabs)
-  1. Assessment        — pipeline output inspection
-  2. Phrase Editor     — three-panel colour-coded chart with assessment navigator
-  3. Pattern Behaviors — catalog of tagged phrase patterns
-  4. Pattern Editor    — per-instance waveform shaping
-  5. Transform Catalog — reference guide for all phrase transforms
-  6. Export            — summary of output files
+  1. Phrase Selector   — full-funscript chart; click a phrase to edit it
+                         (Assessment details collapsible at the bottom)
+  2. Pattern Editor    — batch transform + per-instance waveform shaping
+                         (Pattern Behaviors catalog collapsible at the top)
+  3. Transform Catalog — reference guide for all phrase transforms
+  4. Export            — quality gate, transform plan, download
 """
 
 from __future__ import annotations
@@ -487,37 +487,34 @@ def _main() -> None:
     project: Project | None = st.session_state.project
 
     if project is None or not project.is_loaded:
-        st.title("Funscript Forge")
-        st.markdown(
-            "Use the **sidebar** to select a funscript and click **Load / Analyse** "
-            "to begin.  The assessment pipeline will detect phases, cycles, patterns, "
-            "and phrases, then present them as interactive work items for you to review."
-        )
-        st.divider()
-        st.markdown(
-            "### Pipeline\n"
-            "1. **Assess** — structural analysis (phases → cycles → patterns → phrases)\n"
-            "2. **Work Items** — review and tag detected sections\n"
-            "3. **Edit** — fine-tune per-section settings\n"
-            "4. **Export** — write JSON window files for the customizer\n"
-        )
+        _render_welcome()
         return
 
-    tab_assessment, tab_viewer, tab_catalog, tab_pattern, tab_transforms, tab_export = st.tabs(
-        ["Assessment", "Phrase Editor", "Pattern Behaviors", "Pattern Editor", "Transform Catalog", "Export"]
+    # Icon row above tabs — small images aligned to the 4 tab positions.
+    _mdir = os.path.join(_ROOT, "media")
+    _tab_icons = [
+        os.path.join(_mdir, "anvil.png"),
+        os.path.join(_mdir, "worktable.png"),
+        os.path.join(_mdir, "oven.png"),
+        os.path.join(_mdir, "spark.png"),
+    ]
+    _ic = st.columns(4)
+    for _col, _icon in zip(_ic, _tab_icons):
+        if _icon and os.path.exists(_icon):
+            with _col:
+                _il, _im, _ir = st.columns([1, 2, 1])
+                _im.image(_icon, use_container_width=True)
+
+    # Tab indices: 0=Phrase Selector, 1=Pattern Editor, 2=Transform Catalog, 3=Export
+    tab_viewer, tab_pattern, tab_transforms, tab_export = st.tabs(
+        ["Phrase Selector", "Pattern Editor", "Transform Catalog", "Export"]
     )
 
-    with tab_assessment:
-        assessment_panel.render(project)
-
     with tab_viewer:
-        _render_viewer_tab(project)
-
-    with tab_catalog:
-        catalog_view_panel.render(project)
+        _render_phrase_selector_tab(project)
 
     with tab_pattern:
-        pattern_editor_panel.render(project)
+        _render_pattern_editor_tab(project)
 
     with tab_transforms:
         transform_catalog_panel.render()
@@ -541,9 +538,101 @@ def _main() -> None:
         )
 
 
-def _render_viewer_tab(project: Project) -> None:
+def _render_welcome() -> None:
+    """Onboarding welcome screen shown before any funscript is loaded."""
+    _media = lambda name: os.path.join(_ROOT, "media", name)  # noqa: E731
+
+    # App icon + wide wordmark logo side by side
+    _il, _ic, _ir = st.columns([1, 1, 4])
+    with _ic:
+        if os.path.exists(_media("hammer-striking-anvil.png")):
+            st.image(_media("hammer-striking-anvil.png"), use_container_width=True)
+    with _ir:
+        if os.path.exists(_media("funscriptforge-logo-wide.png")):
+            st.image(_media("funscriptforge-logo-wide.png"), use_container_width=True)
+        elif os.path.exists(_media("funscriptforge.png")):
+            st.image(_media("funscriptforge.png"), use_container_width=True)
+
+    # Cinematic atmosphere banner
+    if os.path.exists(_media("forge-social-banner.png")):
+        st.image(_media("forge-social-banner.png"), use_container_width=True)
+
+    st.markdown(
+        "**Funscript Forge** analyses funscripts, detects phrase structure and motion "
+        "patterns, and lets you apply per-phrase transforms before exporting a clean, "
+        "device-safe output file."
+    )
+    st.divider()
+
+    # Workflow icon row — one column per main tab
+    _icons = [
+        ("anvil.png",     "Phrase Selector",   "Analyse & select phrases"),
+        ("worktable.png", "Pattern Editor",     "Shape motion patterns"),
+        ("oven.png",      "Transform Catalog",  "Apply & preview transforms"),
+    ]
+    icon_cols = st.columns(len(_icons))
+    for col, (img, label, desc) in zip(icon_cols, _icons):
+        with col:
+            if os.path.exists(_media(img)):
+                st.image(_media(img), use_container_width=True)
+            st.markdown(f"**{label}**  \n{desc}")
+
+    st.divider()
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown(
+            "#### How to get started\n\n"
+            "1. **Open a funscript** — paste the file path in the sidebar "
+            "(or upload it if using the web UI).\n\n"
+            "2. **Add matching media** *(optional)* — point to the audio or video "
+            "file so you can hear each phrase while editing.\n\n"
+            "3. **Select a phrase** — the **Phrase Selector** tab shows the full "
+            "funscript as a chart.  Click any phrase band or use the Edit buttons "
+            "to open it for detail editing.\n\n"
+            "4. **Shape patterns** — the **Pattern Editor** tab lets you batch-apply "
+            "transforms to every phrase sharing the same motion pattern.\n\n"
+            "5. **Export** — the **Export** tab runs a quality check, previews all "
+            "accepted transforms, and downloads the final funscript."
+        )
+    with c2:
+        st.markdown(
+            "#### What the assessment detects\n\n"
+            "| Stage | What it finds |\n"
+            "| --- | --- |\n"
+            "| Phases | Individual up/down strokes |\n"
+            "| Cycles | Complete oscillations (one full stroke pair) |\n"
+            "| Patterns | Runs of similar cycles grouped by tempo & depth |\n"
+            "| Phrases | Contiguous sections with stable motion character |\n"
+            "| BPM transitions | Points where tempo shifts significantly |\n\n"
+            "Each phrase is automatically tagged with a **behavioural label** "
+            "(frantic, edging, teasing, build, etc.) that drives transform suggestions."
+        )
+
+    st.divider()
+    st.caption(
+        "Tip: the sidebar **Phrase detection settings** control how aggressively "
+        "short phrases are merged and how sensitive the amplitude-change detector is. "
+        "Re-analyse any time after adjusting them."
+    )
+
+
+def _render_phrase_selector_tab(project: Project) -> None:
+    """Tab 0 — Phrase Selector with assessment details below."""
     view_state = st.session_state.view_state
-    viewer_panel.render(project, view_state, large_funscript_threshold=st.session_state.large_funscript_threshold)
+    viewer_panel.render(
+        project, view_state,
+        large_funscript_threshold=st.session_state.large_funscript_threshold,
+    )
+    with st.expander("Assessment details", expanded=False):
+        assessment_panel.render(project)
+
+
+def _render_pattern_editor_tab(project: Project) -> None:
+    """Tab 1 — Pattern Behaviors catalog (collapsible) then Pattern Editor."""
+    with st.expander("Pattern Behaviors catalog", expanded=False):
+        catalog_view_panel.render(project)
+    pattern_editor_panel.render(project)
 
 
 def _commit_actions(project: Project, committed_actions: list) -> None:
