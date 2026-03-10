@@ -134,7 +134,22 @@ def _detail_fragment(
                 split_ms = None  # assessment not ready or phrase dict missing keys
 
     # ------------------------------------------------------------------
-    # Resolve transform (only needed when not in split mode)
+    # Build baseline: apply accepted transform chain to original_actions
+    # ------------------------------------------------------------------
+    _chain = st.session_state.get(f"phrase_transform_chain_{phrase_idx}", [])
+    if _chain:
+        baseline_actions = copy.deepcopy(original_actions)
+        for _ts in _chain:
+            _spec = TRANSFORM_CATALOG.get(_ts.get("transform_key", "passthrough"),
+                                          TRANSFORM_CATALOG["passthrough"])
+            baseline_actions = _apply_transform_to_window(
+                baseline_actions, phrase, _spec, _ts.get("param_values", {})
+            )
+    else:
+        baseline_actions = original_actions
+
+    # ------------------------------------------------------------------
+    # Resolve pending transform (only needed when not in split mode)
     # ------------------------------------------------------------------
     if not split_mode:
         catalog_keys   = [k for k in TRANSFORM_ORDER if k in TRANSFORM_CATALOG]
@@ -144,8 +159,7 @@ def _detail_fragment(
         if sel_label and sel_label in catalog_labels:
             transform_key = catalog_keys[catalog_labels.index(sel_label)]
         else:
-            _stored = st.session_state.get(f"phrase_transform_{phrase_idx}", {})
-            transform_key = _stored.get("transform_key", "passthrough")
+            transform_key = "passthrough"
 
         spec = TRANSFORM_CATALOG.get(transform_key, TRANSFORM_CATALOG["passthrough"])
 
@@ -154,18 +168,21 @@ def _detail_fragment(
             sv = st.session_state.get(f"param_{phrase_idx}_{pk}")
             param_values[pk] = sv if sv is not None else param.default
 
-        preview_actions = _apply_transform_to_window(original_actions, phrase, spec, param_values)
+        # Preview applies pending transform on top of the accepted baseline
+        preview_actions = _apply_transform_to_window(baseline_actions, phrase, spec, param_values)
 
     # ------------------------------------------------------------------
-    # Stats panel (left) | Transform panel (right), then charts full width
+    # Grid layout:
+    #   Row 1: [stats table (3/4)] [empty (1/4)]
+    #   Row 2: [charts + titles (3/4)] [transform panel (1/4)]
     # ------------------------------------------------------------------
     import pandas as pd
     from utils import ms_to_timestamp as _mts
-    col_stats, col_transform = st.columns([2, 1])
 
+    # Row 1 — stats table only (based on current baseline)
+    col_stats, _ = st.columns([3, 1])
     with col_stats:
-        # Phrase statistics table
-        _acts = [a for a in original_actions
+        _acts = [a for a in baseline_actions
                  if phrase["start_ms"] <= a["at"] <= phrase["end_ms"]]
         _pos  = [a["pos"] for a in _acts] if _acts else []
         _lo, _hi = (min(_pos), max(_pos)) if _pos else (0, 0)
@@ -185,6 +202,39 @@ def _detail_fragment(
         }
         st.dataframe(pd.DataFrame([_stat_row]), hide_index=True, width="stretch")
 
+    # Row 2 — charts (left) | transform panel (right)
+    col_content, col_transform = st.columns([3, 1])
+
+    with col_content:
+        _chain_label = f" ({len(_chain)} accepted)" if _chain else ""
+        st.subheader(f"P{phrase_idx + 1} — Baseline{_chain_label}")
+        st.caption(_phrase_description(phrase))
+        _render_chart(
+            actions=baseline_actions,
+            phrases=phrases,
+            phrase_idx=phrase_idx,
+            win_start=win_start,
+            win_end=win_end,
+            view_state=view_state,
+            chart_key=f"detail_orig_{phrase_idx}_{win_start}",
+            split_ms=split_ms,
+        )
+
+        if not split_mode:
+            st.subheader(f"Preview — {spec.name}")
+            st.caption(_phrase_description(phrase))
+            _render_chart(
+                actions=preview_actions,
+                phrases=phrases,
+                phrase_idx=phrase_idx,
+                win_start=win_start,
+                win_end=win_end,
+                view_state=view_state,
+                chart_key=f"detail_prev_{phrase_idx}_{win_start}_{transform_key}",
+            )
+            _render_preview_stats(preview_actions, phrase)
+            st.caption("*(not saved)*")
+
     with col_transform:
         if split_mode:
             confirmed_split_ms = _render_split_controls(
@@ -198,35 +248,6 @@ def _detail_fragment(
         _render_nav_buttons(phrases, phrase_idx, view_state, duration_ms)
         st.write("")
         _render_save_cancel(phrase_idx, view_state)
-
-    # Charts full width below
-    st.subheader(f"P{phrase_idx + 1} — Phrase Detail")
-    st.caption(_phrase_description(phrase))
-    _render_chart(
-        actions=original_actions,
-        phrases=phrases,
-        phrase_idx=phrase_idx,
-        win_start=win_start,
-        win_end=win_end,
-        view_state=view_state,
-        chart_key=f"detail_orig_{phrase_idx}_{win_start}",
-        split_ms=split_ms,
-    )
-
-    if not split_mode:
-        st.subheader(f"Preview — {spec.name}")
-        st.caption(_phrase_description(phrase))
-        _render_chart(
-            actions=preview_actions,
-            phrases=phrases,
-            phrase_idx=phrase_idx,
-            win_start=win_start,
-            win_end=win_end,
-            view_state=view_state,
-            chart_key=f"detail_prev_{phrase_idx}_{win_start}_{transform_key}",
-        )
-        _render_preview_stats(preview_actions, phrase)
-        st.caption("*(not saved)*")
 
 
 # ------------------------------------------------------------------
@@ -744,74 +765,104 @@ def _render_nav_buttons(phrases: list, phrase_idx: int, view_state, duration_ms:
 # ------------------------------------------------------------------
 
 def _render_save_cancel(phrase_idx: int, view_state) -> None:
-    """Accept stores the current transform and returns to the phrase selector.
-    Cancel discards only this phrase's proposed transform and returns to the selector.
+    """Accept confirms transform for this phrase (stays in editor for further tweaks).
+    Done commits all transforms and returns to phrase selector with full-funscript view.
+    Cancel discards this phrase's transform and returns to selector.
     """
-    col_save, col_cancel = st.columns(2)
-    with col_save:
-        if st.button(
-            "✓ Accept",
-            key="pd_save",
-            width="stretch",
-            type="primary",
-            help="Accept this transform and return to phrase selector",
-        ):
-            # Keep phrase_transform state — navigate back to the Phrase Selector tab
-            view_state.clear_selection()
-            st.session_state.phrase_sel_chart_instance = (
-                st.session_state.get("phrase_sel_chart_instance", 0) + 1
-            )
-            st.session_state.goto_tab = 0
-            st.rerun(scope="app")
+    from pattern_catalog.phrase_transforms import TRANSFORM_CATALOG, TRANSFORM_ORDER
+    _pending_label = st.session_state.get(f"transform_sel_{phrase_idx}")
+    _keys = [k for k in TRANSFORM_ORDER if k in TRANSFORM_CATALOG]
+    _labels = [TRANSFORM_CATALOG[k].name for k in _keys]
+    _pending_key = (
+        _keys[_labels.index(_pending_label)]
+        if _pending_label and _pending_label in _labels else "passthrough"
+    )
 
-    with col_cancel:
-        if st.button(
-            "✕ Cancel",
-            key="pd_cancel",
-            width="stretch",
-            help="Discard this phrase's transform and return to phrase selector",
-        ):
-            # Clear only the current phrase's transform keys, leave others intact
-            st.session_state.pop(f"phrase_transform_{phrase_idx}", None)
-            st.session_state.pop(f"transform_sel_{phrase_idx}", None)
-            for k in [k for k in st.session_state
-                      if k.startswith(f"param_{phrase_idx}_")]:
-                st.session_state.pop(k, None)
-            view_state.clear_selection()
-            st.session_state.phrase_sel_chart_instance = (
-                st.session_state.get("phrase_sel_chart_instance", 0) + 1
-            )
-            st.session_state.goto_tab = 0
-            st.rerun(scope="app")
+    if st.button(
+        "✓ Accept",
+        key="pd_save",
+        width="stretch",
+        type="primary",
+        help="Accept this transform — it becomes the new baseline for further editing",
+    ):
+        # Append pending transform to the accepted chain (skip passthrough)
+        if _pending_key != "passthrough":
+            _pv = {
+                pk: st.session_state.get(f"param_{phrase_idx}_{pk}", p.default)
+                for pk, p in TRANSFORM_CATALOG[_pending_key].params.items()
+            }
+            _chain_key = f"phrase_transform_chain_{phrase_idx}"
+            _cur_chain = st.session_state.get(_chain_key, [])
+            st.session_state[_chain_key] = _cur_chain + [
+                {"transform_key": _pending_key, "param_values": _pv}
+            ]
+        # Reset pending selection to passthrough
+        st.session_state.pop(f"transform_sel_{phrase_idx}", None)
+        for k in [k for k in st.session_state if k.startswith(f"param_{phrase_idx}_")]:
+            st.session_state.pop(k, None)
+
+    _chain_count = len(st.session_state.get(f"phrase_transform_chain_{phrase_idx}", []))
+    if _chain_count:
+        st.caption(f"✓ {_chain_count} transform{'s' if _chain_count > 1 else ''} accepted")
+
+    st.write("")
+
+    if st.button(
+        "✔ Done",
+        key="pd_done",
+        width="stretch",
+        help="Finish all edits — return to Phrase Selector showing the updated funscript",
+    ):
+        view_state.clear_selection()
+        view_state.reset_zoom()
+        st.session_state.pop("phrase_table", None)
+        st.session_state.phrase_sel_chart_instance = (
+            st.session_state.get("phrase_sel_chart_instance", 0) + 1
+        )
+        st.session_state.goto_tab = 0
+        st.rerun(scope="app")
+
+    st.write("")
+
+    if st.button(
+        "✕ Cancel",
+        key="pd_cancel",
+        width="stretch",
+        help="Discard pending transform — revert preview to baseline and choose again",
+    ):
+        # Clear only the pending selection — the accepted chain is preserved
+        st.session_state.pop(f"transform_sel_{phrase_idx}", None)
+        for k in [k for k in st.session_state if k.startswith(f"param_{phrase_idx}_")]:
+            st.session_state.pop(k, None)
 
 
 def build_edited_actions(phrases: list, original_actions: list) -> list:
-    """Apply all stored phrase transforms to original_actions."""
+    """Apply all accepted transform chains to original_actions."""
     from pattern_catalog.phrase_transforms import TRANSFORM_CATALOG
 
     result = copy.deepcopy(original_actions)
     for idx, phrase in enumerate(phrases):
-        transform_state = st.session_state.get(f"phrase_transform_{idx}", {})
-        transform_key   = transform_state.get("transform_key")
-        if not transform_key or transform_key == "passthrough":
-            continue
-        param_values = transform_state.get("param_values", {})
-        spec = TRANSFORM_CATALOG.get(transform_key)
-        if not spec:
-            continue
-        phrase_start = phrase["start_ms"]
-        phrase_end   = phrase["end_ms"]
-        phrase_slice = [a for a in result if phrase_start <= a["at"] <= phrase_end]
-        transformed  = spec.apply(phrase_slice, param_values)
-        if spec.structural:
-            outside = [a for a in result if not (phrase_start <= a["at"] <= phrase_end)]
-            result = sorted(outside + transformed, key=lambda a: a["at"])
-        else:
-            t_to_pos = {a["at"]: a["pos"] for a in transformed}
-            for a in result:
-                if a["at"] in t_to_pos:
-                    a["pos"] = t_to_pos[a["at"]]
-
+        chain = st.session_state.get(f"phrase_transform_chain_{idx}", [])
+        for transform_state in chain:
+            transform_key = transform_state.get("transform_key")
+            if not transform_key or transform_key == "passthrough":
+                continue
+            spec = TRANSFORM_CATALOG.get(transform_key)
+            if not spec:
+                continue
+            param_values = transform_state.get("param_values", {})
+            phrase_start = phrase["start_ms"]
+            phrase_end   = phrase["end_ms"]
+            phrase_slice = [a for a in result if phrase_start <= a["at"] <= phrase_end]
+            transformed  = spec.apply(phrase_slice, param_values)
+            if spec.structural:
+                outside = [a for a in result if not (phrase_start <= a["at"] <= phrase_end)]
+                result = sorted(outside + transformed, key=lambda a: a["at"])
+            else:
+                t_to_pos = {a["at"]: a["pos"] for a in transformed}
+                for a in result:
+                    if a["at"] in t_to_pos:
+                        a["pos"] = t_to_pos[a["at"]]
     return result
 
 
