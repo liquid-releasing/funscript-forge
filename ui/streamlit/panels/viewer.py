@@ -17,6 +17,7 @@ displayed below.  A phrase editor will appear here in the next version.
 
 from __future__ import annotations
 
+import json
 from typing import List, Optional
 
 import streamlit as st
@@ -137,9 +138,16 @@ def render(
         # ------------------------------------------------------------------
         _render_phrase_info(view_state, phrases)
         from ui.streamlit.panels.media_player import render_player
+        _sel_start = view_state.selection_start_ms or 0
+        _sel_end   = view_state.selection_end_ms   or duration_ms
+        with open(project.funscript_path, encoding="utf-8") as _fp:
+            _all_acts = json.load(_fp).get("actions", [])
+        _sel_acts = [a for a in _all_acts if _sel_start <= a["at"] <= _sel_end]
         render_player(
-            start_ms=view_state.selection_start_ms or 0,
-            key_suffix=f"viewer_{view_state.selection_start_ms}",
+            start_ms=_sel_start,
+            end_ms=_sel_end,
+            actions=_sel_acts,
+            key_suffix=f"viewer_{_sel_start}",
         )
         phrase_detail.render(
             phrases=phrases,
