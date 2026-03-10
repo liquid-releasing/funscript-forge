@@ -525,39 +525,7 @@ def _sidebar() -> None:
 
         st.sidebar.markdown("---")
 
-        # --- Manual item ---
-        with st.sidebar.expander("Add manual item"):
-            m_start = st.number_input("Start (ms)", min_value=0, value=0, step=1000, key="m_start")
-            m_end = st.number_input("End (ms)", min_value=0, value=10000, step=1000, key="m_end")
-            m_type = st.selectbox(
-                "Type",
-                options=["Performance", "Break", "Raw", "Neutral"],
-                key="m_type",
-            )
-            m_label = st.text_input("Label", key="m_label")
-            if st.button("Add item"):
-                type_map = {
-                    "Performance": ItemType.PERFORMANCE,
-                    "Break": ItemType.BREAK,
-                    "Raw": ItemType.RAW,
-                    "Neutral": ItemType.NEUTRAL,
-                }
-                project.add_item(WorkItem(
-                    start_ms=int(m_start), end_ms=int(m_end),
-                    item_type=type_map[m_type], label=m_label, source="manual",
-                ))
-                st.rerun()
-
         st.sidebar.markdown("---")
-
-        # --- Export ---
-        st.sidebar.subheader("Export")
-        if st.sidebar.button("Export window JSONs"):
-            written = project.export_windows(st.session_state.output_dir)
-            if written:
-                st.sidebar.success("Written:\n" + "\n".join(written.values()))
-            else:
-                st.sidebar.info("No typed items to export yet.")
 
         project_save_path = os.path.join(
             st.session_state.output_dir, f"{project.name}.project.json"
@@ -605,25 +573,29 @@ def _main() -> None:
         _render_welcome()
         return
 
-    # Tab indices: 0=Phrase Selector, 1=Pattern Editor, 2=Transform Catalog, 3=Export
-    tab_viewer, tab_pattern, tab_transforms, tab_export = st.tabs(
-        ["Phrase Selector", "Pattern Editor", "Transform Catalog", "Export"]
+    # Tab indices: 0=Phrase Selector, 1=Phrase Editor, 2=Pattern Editor, 3=Transform Catalog, 4=Export
+    tab_viewer, tab_editor, tab_pattern, tab_transforms, tab_export = st.tabs(
+        ["Phrase Selector", "Phrase Editor", "Pattern Editor", "Transform Catalog", "Export"]
     )
 
     with tab_viewer:
         st.session_state["active_tab"] = 0
         _render_phrase_selector_tab(project)
 
-    with tab_pattern:
+    with tab_editor:
         st.session_state["active_tab"] = 1
+        _render_phrase_editor_tab(project)
+
+    with tab_pattern:
+        st.session_state["active_tab"] = 2
         _render_pattern_editor_tab(project)
 
     with tab_transforms:
-        st.session_state["active_tab"] = 2
+        st.session_state["active_tab"] = 3
         transform_catalog_panel.render()
 
     with tab_export:
-        st.session_state["active_tab"] = 3
+        st.session_state["active_tab"] = 4
         export_panel.render(project)
 
     # Programmatic tab navigation: set st.session_state.goto_tab = <0-based index>
@@ -777,8 +749,50 @@ def _render_phrase_selector_tab(project: Project) -> None:
         assessment_panel.render(project)
 
 
+def _render_phrase_editor_tab(project: Project) -> None:
+    """Tab 1 — Phrase Editor: single-phrase editor with prev/next navigation and X to return."""
+    from ui.streamlit.panels import phrase_detail
+    from ui.streamlit.panels.media_player import render_player
+    from ui.streamlit.panels.phrase_detail import _select_and_zoom
+    import json
+
+    view_state = st.session_state.view_state
+    assessment_dict = project.assessment.to_dict()
+    phrases     = assessment_dict.get("phrases", [])
+    duration_ms = project.assessment.duration_ms
+
+    # Auto-select P1 if no phrase is selected yet.
+    if not view_state.has_selection() and phrases:
+        _select_and_zoom(phrases[0], view_state, duration_ms)
+
+    # X button — clear selection and return to Phrase Selector tab.
+    if st.button("✕  Close and return to Phrase Selector", key="editor_close"):
+        view_state.clear_selection()
+        st.session_state.goto_tab = 0
+        st.rerun()
+
+    with st.spinner("Loading phrase editor…"):
+        sel_start = view_state.selection_start_ms or 0
+        sel_end   = view_state.selection_end_ms   or duration_ms
+        with open(project.funscript_path, encoding="utf-8") as _fp:
+            _sel_acts = [a for a in json.load(_fp).get("actions", [])
+                         if sel_start <= a["at"] <= sel_end]
+        render_player(
+            start_ms=sel_start,
+            end_ms=sel_end,
+            actions=_sel_acts,
+            key_suffix=f"editor_{sel_start}",
+        )
+        phrase_detail.render(
+            phrases=phrases,
+            view_state=view_state,
+            duration_ms=duration_ms,
+            bpm_threshold=st.session_state.get("bpm_threshold", 120.0),
+        )
+
+
 def _render_pattern_editor_tab(project: Project) -> None:
-    """Tab 1 — Pattern Behaviors catalog (collapsible) then Pattern Editor."""
+    """Tab 2 — Pattern Behaviors catalog (collapsible) then Pattern Editor."""
     with st.expander("Pattern Behaviors catalog", expanded=False):
         catalog_view_panel.render(project)
     pattern_editor_panel.render(project)

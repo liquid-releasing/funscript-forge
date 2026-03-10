@@ -157,40 +157,35 @@ def _detail_fragment(
         preview_actions = _apply_transform_to_window(original_actions, phrase, spec, param_values)
 
     # ------------------------------------------------------------------
-    # Two-column layout: charts (left 3) | transform controls (right 1)
+    # Stats panel (left) | Transform panel (right), then charts full width
     # ------------------------------------------------------------------
-    col_charts, col_right = st.columns([3, 1])
+    import pandas as pd
+    from utils import ms_to_timestamp as _mts
+    col_stats, col_transform = st.columns([2, 1])
 
-    with col_charts:
-        st.subheader(f"P{phrase_idx + 1} — Phrase Detail")
-        st.caption(_phrase_description(phrase))
-        _render_chart(
-            actions=original_actions,
-            phrases=phrases,
-            phrase_idx=phrase_idx,
-            win_start=win_start,
-            win_end=win_end,
-            view_state=view_state,
-            chart_key=f"detail_orig_{phrase_idx}_{win_start}",
-            split_ms=split_ms,
-        )
+    with col_stats:
+        # Phrase statistics table
+        _acts = [a for a in original_actions
+                 if phrase["start_ms"] <= a["at"] <= phrase["end_ms"]]
+        _pos  = [a["pos"] for a in _acts] if _acts else []
+        _lo, _hi = (min(_pos), max(_pos)) if _pos else (0, 0)
+        _dur = phrase["end_ms"] - phrase["start_ms"]
+        _stat_row = {
+            "Start":    _mts(phrase["start_ms"]),
+            "End":      _mts(phrase["end_ms"]),
+            "Duration": f"{_dur / 1000:.1f} s",
+            "BPM":      f"{phrase.get('bpm', 0):.1f}",
+            "Pattern":  phrase.get("pattern_label", "—"),
+            "Cycles":   phrase.get("cycle_count", "—"),
+            "Min":      _lo,
+            "Max":      _hi,
+            "Range":    _hi - _lo,
+            "Mean":     f"{sum(_pos) / len(_pos):.1f}" if _pos else "—",
+            "Actions":  len(_acts),
+        }
+        st.dataframe(pd.DataFrame([_stat_row]), hide_index=True, width="stretch")
 
-        if not split_mode:
-            st.subheader(f"Preview — {spec.name}")
-            st.caption(_phrase_description(phrase))
-            _render_chart(
-                actions=preview_actions,
-                phrases=phrases,
-                phrase_idx=phrase_idx,
-                win_start=win_start,
-                win_end=win_end,
-                view_state=view_state,
-                chart_key=f"detail_prev_{phrase_idx}_{win_start}_{transform_key}",
-            )
-            _render_preview_stats(preview_actions, phrase)
-            st.caption("*(not saved)*")
-
-    with col_right:
+    with col_transform:
         if split_mode:
             confirmed_split_ms = _render_split_controls(
                 phrase_idx, phrase, original_actions, view_state, duration_ms
@@ -199,11 +194,39 @@ def _detail_fragment(
                 _split_phrase(phrase_idx, confirmed_split_ms, view_state, duration_ms)
         else:
             _render_transform_controls(phrase, bpm_threshold, phrase_idx)
-
         st.write("")
         _render_nav_buttons(phrases, phrase_idx, view_state, duration_ms)
         st.write("")
         _render_save_cancel(phrase_idx, view_state)
+
+    # Charts full width below
+    st.subheader(f"P{phrase_idx + 1} — Phrase Detail")
+    st.caption(_phrase_description(phrase))
+    _render_chart(
+        actions=original_actions,
+        phrases=phrases,
+        phrase_idx=phrase_idx,
+        win_start=win_start,
+        win_end=win_end,
+        view_state=view_state,
+        chart_key=f"detail_orig_{phrase_idx}_{win_start}",
+        split_ms=split_ms,
+    )
+
+    if not split_mode:
+        st.subheader(f"Preview — {spec.name}")
+        st.caption(_phrase_description(phrase))
+        _render_chart(
+            actions=preview_actions,
+            phrases=phrases,
+            phrase_idx=phrase_idx,
+            win_start=win_start,
+            win_end=win_end,
+            view_state=view_state,
+            chart_key=f"detail_prev_{phrase_idx}_{win_start}_{transform_key}",
+        )
+        _render_preview_stats(preview_actions, phrase)
+        st.caption("*(not saved)*")
 
 
 # ------------------------------------------------------------------
@@ -733,11 +756,12 @@ def _render_save_cancel(phrase_idx: int, view_state) -> None:
             type="primary",
             help="Accept this transform and return to phrase selector",
         ):
-            # Keep phrase_transform state — just navigate back to the selector
+            # Keep phrase_transform state — navigate back to the Phrase Selector tab
             view_state.clear_selection()
             st.session_state.phrase_sel_chart_instance = (
                 st.session_state.get("phrase_sel_chart_instance", 0) + 1
             )
+            st.session_state.goto_tab = 0
             st.rerun(scope="app")
 
     with col_cancel:
@@ -757,6 +781,7 @@ def _render_save_cancel(phrase_idx: int, view_state) -> None:
             st.session_state.phrase_sel_chart_instance = (
                 st.session_state.get("phrase_sel_chart_instance", 0) + 1
             )
+            st.session_state.goto_tab = 0
             st.rerun(scope="app")
 
 
