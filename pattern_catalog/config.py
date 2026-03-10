@@ -19,6 +19,16 @@ class TransformerConfig:
     # Set to 1.0 to disable.
     time_scale: float = 1.0
 
+    def __post_init__(self) -> None:
+        if self.bpm_threshold <= 0:
+            raise ValueError(f"bpm_threshold must be > 0, got {self.bpm_threshold}")
+        if self.amplitude_scale <= 0:
+            raise ValueError(f"amplitude_scale must be > 0, got {self.amplitude_scale}")
+        if not 0.0 <= self.lpf_default <= 1.0:
+            raise ValueError(f"lpf_default must be in [0, 1], got {self.lpf_default}")
+        if self.time_scale <= 0:
+            raise ValueError(f"time_scale must be > 0, got {self.time_scale}")
+
     def to_dict(self) -> dict:
         return dataclasses.asdict(self)
 

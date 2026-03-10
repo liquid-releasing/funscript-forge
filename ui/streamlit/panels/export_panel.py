@@ -14,11 +14,14 @@ from __future__ import annotations
 
 import copy
 import json
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 import streamlit as st
 
 from utils import ms_to_timestamp
+
+if TYPE_CHECKING:
+    from ui.common.project import Project
 
 # Column widths / headers for each table
 _COL_W_DONE    = [0.4, 2.8, 1.0, 2.8, 1.8, 2.0, 1.5, 0.6]
@@ -32,7 +35,7 @@ _HEADERS_REC   = ["#", "Time", "Dur (s)", "Transform", "BPM", "Cycles", "", "", 
 # Public entry point
 # ------------------------------------------------------------------
 
-def render(project) -> None:
+def render(project: "Project") -> None:
     """Render the Export tab."""
     if project is None or not project.is_loaded:
         st.info("Load a funscript first.")
