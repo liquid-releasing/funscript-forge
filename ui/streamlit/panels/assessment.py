@@ -141,7 +141,7 @@ def _render_phrases_section(phrases: List[Dict], project: "Project") -> None:
         rc[5].write(tag_labels)
         if rc[6].button("👁", key=f"ph_focus_{i}", help="Focus in Phrase Editor"):
             st.session_state.view_state.set_selection(ph["start_ms"], ph["end_ms"])
-            st.session_state.goto_tab = 1
+            st.session_state.goto_tab = 0
             st.rerun()
 
 
@@ -248,7 +248,7 @@ def _render_bpm_transitions_section(
                     st.session_state.view_state.set_selection(
                         surrounding["start_ms"], surrounding["end_ms"]
                     )
-                st.session_state.goto_tab = 1
+                st.session_state.goto_tab = 0
                 st.rerun()
     else:
         st.info("No significant BPM transitions detected — tempo is uniform throughout.")
@@ -399,7 +399,8 @@ def _render_patterns_section(patterns: List[Dict], phrases: List[Dict]) -> None:
         if rc[4].button("👁", key=f"bhv_focus_{i}", help="Focus in Pattern Editor"):
             st.session_state.pe_selected_label = tag
             st.session_state.pe_selected_instance = 0
-            st.toast("Switch to the Pattern Editor tab", icon="ℹ️")
+            st.session_state.goto_tab = 1
+            st.rerun()
 
 
 # ---------------------------------------------------------------------------

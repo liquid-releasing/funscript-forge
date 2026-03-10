@@ -700,7 +700,7 @@ def _render_controls(
             for wi in proj.work_items:
                 if wi.start_ms == cycle["start_ms"]:
                     proj.set_item_status(wi.id, "done")
-        st.session_state.goto_tab = 5
+        st.session_state.goto_tab = 3
         st.rerun(scope="app")
 
     # Apply this instance's transform to all other instances
@@ -718,7 +718,7 @@ def _render_controls(
             for wi in proj.work_items:
                 if wi.start_ms in cycle_starts:
                     proj.set_item_status(wi.id, "done")
-        st.session_state.goto_tab = 5
+        st.session_state.goto_tab = 3
         st.rerun(scope="app")
 
     st.divider()

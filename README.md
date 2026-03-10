@@ -1,6 +1,6 @@
 # funscript-forge
 
-![Funscript Forge](media/funscriptforge.png)
+![Funscript Forge](media/funscriptforge-logo-wide.png)
 
 A structure-aware post-processor for funscripts. It analyzes the motion
 structure of an existing script, lets you review and tag sections through an

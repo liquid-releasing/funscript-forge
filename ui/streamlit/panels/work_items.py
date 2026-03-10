@@ -109,7 +109,7 @@ def _render_item_row(project: "Project", item) -> None:
             # Auto-advance status to In Progress if still To Do
             if item.status == "todo":
                 project.set_item_status(item.id, "in_progress")
-            st.session_state.goto_tab = 1
+            st.session_state.goto_tab = 0
             st.rerun()
 
         st.markdown("</div>", unsafe_allow_html=True)
