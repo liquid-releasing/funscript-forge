@@ -67,8 +67,15 @@ class _MediaHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             return
 
-        ext          = os.path.splitext(file_path)[1].lower()
-        content_type = self._MIME.get(ext, "application/octet-stream")
+        ext = os.path.splitext(file_path)[1].lower()
+
+        # Allowlist: only serve known media extensions — refuse everything else.
+        if ext not in self._MIME:
+            self.send_response(403)
+            self.end_headers()
+            return
+
+        content_type = self._MIME[ext]
         file_size    = os.path.getsize(file_path)
         range_header = self.headers.get("Range", "")
 

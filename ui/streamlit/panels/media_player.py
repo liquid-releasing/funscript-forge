@@ -149,11 +149,11 @@ def validate_media_file(path: str) -> str | None:
     Reads only the first 12 bytes — fast enough to run on every load.
 
     Returns ``None`` if the file looks intact, or a short human-readable
-    error string if it appears corrupt or unreadable.
+    error string if it appears corrupt, unreadable, or has an unsupported
+    extension.  Uses an allowlist — any extension not explicitly recognised
+    is rejected rather than passed through.
 
-    Supported containers: MP3, MP4/M4A/MOV, WAV, OGG, WebM/MKV.
-    Files with unrecognised headers (e.g. AAC raw, AVI) are passed through
-    without a corruption verdict rather than generating false positives.
+    Supported containers: MP3, MP4/M4A/MOV, WAV, OGG, WebM/MKV, AAC, AVI.
     """
     if not os.path.isfile(path):
         return "File not found."
@@ -171,7 +171,7 @@ def validate_media_file(path: str) -> str | None:
 
     ext = os.path.splitext(path)[1].lower()
 
-    # MP3: starts with ID3 tag or sync bytes (0xFF followed by 0xE0–0xFF)
+    # MP3: ID3 tag or ADTS sync bytes (0xFF 0xEx/0xFx)
     if ext == ".mp3":
         if header[:3] == b"ID3":
             return None
@@ -194,8 +194,8 @@ def validate_media_file(path: str) -> str | None:
             return None
         return "Not a valid WAV file (missing RIFF/WAVE header)."
 
-    # OGG (covers .ogg and .oga)
-    if ext in {".ogg", ".oga"}:
+    # OGG
+    if ext == ".ogg":
         if header[:4] == b"OggS":
             return None
         return "Not a valid OGG file (missing OggS capture pattern)."
@@ -206,8 +206,20 @@ def validate_media_file(path: str) -> str | None:
             return None
         return "Not a valid WebM/MKV file (missing EBML header)."
 
-    # Unknown extension — no verdict, let the browser decide.
-    return None
+    # AAC (ADTS): sync bytes 0xFF 0xF1 (MPEG-4) or 0xFF 0xF9 (MPEG-2)
+    if ext == ".aac":
+        if header[0] == 0xFF and header[1] in (0xF1, 0xF9):
+            return None
+        return "Not a valid AAC file (missing ADTS sync bytes)."
+
+    # AVI: RIFF….AVI
+    if ext == ".avi":
+        if header[:4] == b"RIFF" and header[8:12] == b"AVI ":
+            return None
+        return "Not a valid AVI file (missing RIFF/AVI header)."
+
+    # Reject everything else — unknown extensions are not allowed.
+    return f"Unsupported file type '{ext}'. Allowed: mp3, m4a, mp4, mov, wav, ogg, webm, mkv, aac, avi."
 
 
 def find_matching_media(funscript_path: str, uploads_dir: str) -> str | None:
