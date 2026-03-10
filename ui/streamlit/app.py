@@ -768,12 +768,14 @@ def _render_phrase_editor_tab(project: Project) -> None:
     # X button — clear selection and return to Phrase Selector tab.
     if st.button("✕  Close and return to Phrase Selector", key="editor_close"):
         view_state.clear_selection()
+        view_state.reset_zoom()
+        st.session_state.pop("phrase_table", None)
         st.session_state.goto_tab = 0
         st.rerun()
 
-    with st.spinner("Loading phrase editor…"):
-        sel_start = view_state.selection_start_ms or 0
-        sel_end   = view_state.selection_end_ms   or duration_ms
+    sel_start = view_state.selection_start_ms or 0
+    sel_end   = view_state.selection_end_ms   or duration_ms
+    with st.spinner("Loading phrase…"):
         with open(project.funscript_path, encoding="utf-8") as _fp:
             _sel_acts = [a for a in json.load(_fp).get("actions", [])
                          if sel_start <= a["at"] <= sel_end]
@@ -783,12 +785,13 @@ def _render_phrase_editor_tab(project: Project) -> None:
             actions=_sel_acts,
             key_suffix=f"editor_{sel_start}",
         )
-        phrase_detail.render(
-            phrases=phrases,
-            view_state=view_state,
-            duration_ms=duration_ms,
-            bpm_threshold=st.session_state.get("bpm_threshold", 120.0),
-        )
+
+    phrase_detail.render(
+        phrases=phrases,
+        view_state=view_state,
+        duration_ms=duration_ms,
+        bpm_threshold=st.session_state.get("bpm_threshold", 120.0),
+    )
 
 
 def _render_pattern_editor_tab(project: Project) -> None:

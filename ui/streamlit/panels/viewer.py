@@ -54,8 +54,7 @@ def _selector_fragment(
     # Show edited version if any phrase transforms have been accepted
     from ui.streamlit.panels.phrase_detail import build_edited_actions
     has_edits = any(
-        k.startswith("phrase_transform_")
-        and st.session_state[k].get("transform_key", "passthrough") != "passthrough"
+        k.startswith("phrase_transform_chain_") and bool(st.session_state[k])
         for k in st.session_state
     )
     if has_edits:
@@ -245,14 +244,20 @@ def _handle_chart_event(event, view_state, phrases: list) -> None:
                 st.rerun(scope="app")   # full rerun → navigates to Phrase Editor tab
         return
 
-    # Box drag → manual time range selection
+    # Box drag → select phrase by time range and navigate to editor
     box = getattr(sel, "box", None) or []
     if box:
         try:
             x_range = box[0].get("x", [])
             if len(x_range) == 2:
-                view_state.set_selection(int(x_range[0]), int(x_range[1]))
-                st.rerun(scope="app")   # full rerun
+                mid_ms = int((x_range[0] + x_range[1]) / 2)
+                phrase = _find_phrase_at(mid_ms, phrases)
+                if phrase:
+                    _select_phrase(phrase, view_state)
+                else:
+                    view_state.set_selection(int(x_range[0]), int(x_range[1]))
+                st.session_state.goto_tab = 1
+                st.rerun(scope="app")
         except Exception:
             pass
 
@@ -275,13 +280,14 @@ def _render_phrase_table(phrases: list, view_state) -> None:
     )
 
     rows = []
-    for ph in phrases:
+    for i, ph in enumerate(phrases):
         raw_tags = ph.get("tags", []) or []
         if raw_tags:
             behavior = ", ".join(TAGS[t].label if t in TAGS else t for t in raw_tags)
         else:
             behavior = (ph.get("pattern_label", "") or "—").replace("->", "→")
         rows.append({
+            "Phrase":   f"P{i + 1}",
             "Start":    ms_to_timestamp(ph["start_ms"]),
             "End":      ms_to_timestamp(ph["end_ms"]),
             "Dur":      ms_to_timestamp(max(0, ph["end_ms"] - ph["start_ms"])),
