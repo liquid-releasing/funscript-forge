@@ -59,3 +59,14 @@ Generated from static analysis. Items marked ✅ are complete.
 - ✅ C08: CLI error handler decorator
 - ✅ C09: Type hints for complex internals
 - ✅ C10: Status mapping cleanup
+
+### Session 3 — LOW severity
+
+- ✅ C11: Consolidate imports to module level in `cli.py`
+- ✅ C12: Named constants `_LOOP_START` / `_POSITION_CENTER` in customizer
+- ✅ C13: Error-path tests for analyzer, transformer, customizer (+ config validation)
+- ✅ C14: Rename `_proj` → `proj` in `pattern_editor.py`
+- ✅ C15: `__post_init__` range validation in all three config dataclasses
+- ✅ C16: Clarify Step 2 [MANUAL] comment in `cli.py` docstring
+- ✅ C17: `"Project"` type hints on `render()` in all panel files
+- ✅ C18: Validate `"start"`/`"end"` keys in `_load_ts_file` with descriptive error

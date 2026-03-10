@@ -36,8 +36,11 @@ from models import AssessmentResult
 from utils import LoggingMixin, low_pass_filter, parse_timestamp
 from .config import CustomizerConfig
 
-_WindowTriple = Tuple[int, int, str]    # raw windows: (start, end, label)
-_ConfigWindow = Tuple[int, int, dict]   # perf/break windows: (start, end, config_overrides)
+_WindowTriple  = Tuple[int, int, str]    # raw windows: (start, end, label)
+_ConfigWindow  = Tuple[int, int, dict]   # perf/break windows: (start, end, config_overrides)
+
+_LOOP_START      = 2   # customize() loop starts here so [i-1] and [i-2] are always valid
+_POSITION_CENTER = 50  # funscript position midpoint (positions are 0–100)
 
 
 class WindowCustomizer(LoggingMixin):
@@ -144,8 +147,8 @@ class WindowCustomizer(LoggingMixin):
         cycle_midpoints = [(c["start"] + c["end"]) / 2 for c in self._cycles]
         beat_times = sorted(b["time"] for b in self._beats)
 
-        # Loop starts at 2 so actions[i-1] and actions[i-2] are always valid.
-        for i in range(2, len(actions)):
+        # Loop starts at _LOOP_START (2) so actions[i-1] and actions[i-2] are always valid.
+        for i in range(_LOOP_START, len(actions)):
             t = actions[i]["at"]
 
             if self._in(t, raw_ms):
@@ -207,7 +210,7 @@ class WindowCustomizer(LoggingMixin):
         if break_overrides is not None:
             eff = self._effective_config(cfg, break_overrides)
             p = actions[i]["pos"]
-            actions[i]["pos"] = int(p + (50 - p) * eff.break_amplitude_reduce)
+            actions[i]["pos"] = int(p + (_POSITION_CENTER - p) * eff.break_amplitude_reduce)
 
     def _apply_cycle_dynamics(
         self, i: int, actions: list, cfg,
@@ -280,15 +283,22 @@ class WindowCustomizer(LoggingMixin):
             return []
         with open(path) as f:
             data = json.load(f)
-        out = [
-            (
+        if not isinstance(data, list):
+            raise ValueError(f"{label} window file '{path}' must contain a JSON array.")
+        out = []
+        for idx, w in enumerate(data):
+            if "start" not in w or "end" not in w:
+                missing = [k for k in ("start", "end") if k not in w]
+                raise ValueError(
+                    f"{label} window file '{path}', entry {idx}: "
+                    f"missing required key(s): {missing}"
+                )
+            out.append((
                 parse_timestamp(w["start"]),
                 parse_timestamp(w["end"]),
                 w.get("label", ""),
                 w.get("config", {}),
-            )
-            for w in data
-        ]
+            ))
         self._log(f"{label}: loaded {len(out)} windows.")
         return out
 

@@ -40,6 +40,20 @@ class AnalyzerConfig:
     # Flag BPM transitions whose absolute percentage change exceeds this value
     bpm_change_threshold_pct: float = 40.0
 
+    def __post_init__(self) -> None:
+        if self.min_velocity < 0:
+            raise ValueError(f"min_velocity must be >= 0, got {self.min_velocity}")
+        if self.min_phase_duration_ms < 0:
+            raise ValueError(f"min_phase_duration_ms must be >= 0, got {self.min_phase_duration_ms}")
+        if not 0.0 < self.duration_tolerance < 1.0:
+            raise ValueError(f"duration_tolerance must be in (0, 1), got {self.duration_tolerance}")
+        if not 0.0 < self.amplitude_tolerance < 1.0:
+            raise ValueError(f"amplitude_tolerance must be in (0, 1), got {self.amplitude_tolerance}")
+        if self.bpm_change_threshold_pct <= 0:
+            raise ValueError(
+                f"bpm_change_threshold_pct must be > 0, got {self.bpm_change_threshold_pct}"
+            )
+
 
 class FunscriptAnalyzer:
     """Analyzes a funscript and produces a structured AssessmentResult.
