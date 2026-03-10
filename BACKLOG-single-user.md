@@ -5,30 +5,32 @@ Items are drawn from the main backlog, open GitHub issues, and fresh assessment.
 
 ---
 
-## Priority 1 — Core Workflow (Blockers)
+## Priority 1 — Core Workflow (Blockers) ✅ COMPLETE
 
-These items must be complete before the product is usable end-to-end.
+All four blockers fixed in commits `db8b335` and `6dbfeb6` on `single_user_implementation`.
 
-### 1.1 Validate position boundaries after transforms · [#9](https://github.com/liquid-releasing/funscript-forge/issues/9) `bug`
+### ~~1.1 Validate position boundaries after transforms~~ · [#9](https://github.com/liquid-releasing/funscript-forge/issues/9) ✅
 
-Transforms can push `pos` values outside 0–100. Add a post-transform clamp pass and surface a
-warning in the Export panel when any action was clamped.
+`_clamp_sort_dedup()` in `export_panel.py` clamps every `pos` to [0, 100] and shows a
+warning banner if any action was clamped.  15 unit tests added in `tests/test_export_integrity.py`.
 
-### 1.2 Validate timestamp ordering and deduplicate before export · [#10](https://github.com/liquid-releasing/funscript-forge/issues/10) `bug`
+### ~~1.2 Validate timestamp ordering and deduplicate before export~~ · [#10](https://github.com/liquid-releasing/funscript-forge/issues/10) ✅
 
-After stitching transformed slices back into the timeline, the result may contain duplicate `at`
-values or out-of-order entries. Validate and fix before writing the download file.
+Same `_clamp_sort_dedup()` call sorts by `at` and deduplicates (last-write wins) before
+every download.  Covered by the same 15 unit tests.
 
-### 1.3 Record exact transform parameters in export log · [#12](https://github.com/liquid-releasing/funscript-forge/issues/12) `enhancement`
+### ~~1.3 Record exact transform parameters in export log~~ · [#12](https://github.com/liquid-releasing/funscript-forge/issues/12) ✅
 
-The downloaded funscript should include (or accompany) a log of exactly which transforms were
-applied with which parameters so the user can reproduce or adjust a previous session.
+`_build_export_log()` constructs a `_forge_log` dict embedded in every downloaded funscript.
+Records transform name, parameters, source (Phrase/Pattern Editor or Recommended), and export
+timestamp for each change.
 
-### 1.4 Wire transformer and customizer into the Streamlit UI · [#4](https://github.com/liquid-releasing/funscript-forge/issues/4) `enhancement ui`
+### ~~1.4 Wire transformer and customizer into the Streamlit UI~~ · [#4](https://github.com/liquid-releasing/funscript-forge/issues/4) ✅
 
-The backend `FunscriptTransformer` (suggested_updates/) and `WindowCustomizer`
-(user_customization/) are not yet exposed in the UI. Expose a "Run pipeline" flow that lets the
-user apply the full assess → transform → customize chain from the browser.
+`run_pipeline_in_memory()` added to `ui/common/pipeline.py`.  `_render_pipeline_section()`
+added to `export_panel.py` — collapsible expander with BPM threshold + amplitude scale sliders,
+Stage 2 toggle, ▶ Run Pipeline button, and a separate ⬇ Download pipeline result button.
+11 integration tests added in `tests/test_integration.py`.  Total test count: 498.
 
 ---
 
@@ -102,6 +104,49 @@ transition. Add duration-based phrase splitting as a fallback.
 ### 5.3 Fix Streamlit `use_container_width` deprecation warnings
 
 Minor: suppress deprecation warnings in the sidebar layout.
+
+---
+
+## Priority 6 — Distribution (This Sprint)
+
+Items required to ship the single-user packaged executable to an end user.
+
+### 6.1 PyInstaller Windows build pipeline · `packaging`
+
+`launcher.py`, `funscript_forge.spec`, and `build.bat` created.  Remaining work:
+
+- Test the built exe against all three sample funscripts
+- Confirm Streamlit static assets are correctly bundled (white-screen risk)
+- Confirm pattern catalog and user_transforms paths resolve inside `_MEIPASS`
+- Add `media/funscriptforge.ico` icon (convert existing PNG with Pillow or ImageMagick)
+- Measure cold-start time; optimize if > 15 s
+
+### 6.2 Output and user-data directory for frozen exe · `packaging`
+
+When running frozen, `output/` must be placed next to the exe (not inside `_MEIPASS`
+which is read-only on each launch).  Patch `cli.py`, `project.py`, and `pattern_catalog.py`
+to resolve writable directories relative to `sys.executable` (frozen) or `__file__` (dev).
+
+### 6.3 Windows installer (NSIS or Inno Setup) · `packaging`
+
+Wrap `dist/FunscriptForge/` in a one-click installer:
+
+- Install to `%LOCALAPPDATA%\FunscriptForge\`
+- Create Start Menu shortcut and optional Desktop shortcut
+- Add uninstaller
+
+### 6.4 Auto-update mechanism · `packaging`
+
+For a single known user, the simplest path is a `check_for_update()` call on startup
+that compares a `VERSION` file against a GitHub release tag and shows a banner if a
+newer build is available (no silent auto-install required for v1).
+
+### 6.5 GitHub Release and distribution artifact · `packaging`
+
+- Add `VERSION` file (semver, currently `0.5.0`)
+- Create a GitHub Actions workflow (`release.yml`) that builds the exe on push to a
+  `release/*` tag and uploads `FunscriptForge-win64.zip` as a release asset
+- Document the release process in `CONTRIBUTING.md`
 
 ---
 
