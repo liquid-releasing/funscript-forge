@@ -352,4 +352,6 @@ python cli.py test
 
 ---
 
+![Liquid Releasing](media/liquid-releasing-Color-Logo.svg)
+
 *© 2026 [Liquid Releasing](https://github.com/liquid-releasing). Licensed under the [MIT License](LICENSE).  Written by human and Claude AI (Claude Sonnet).*
