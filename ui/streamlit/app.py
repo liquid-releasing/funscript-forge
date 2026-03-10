@@ -94,11 +94,19 @@ if "project" not in st.session_state:
     st.session_state.project: Project | None = None
 
 if "output_dir" not in st.session_state:
-    st.session_state.output_dir = os.path.join(_ROOT, "output")
+    # G32: the launcher sets FUNSCRIPT_FORGE_DATA_DIR to the writable root
+    # beside the executable (frozen) or the project root (dev). Without the
+    # launcher (plain `streamlit run`), fall back to writable_base_dir().
+    _env_data = os.environ.get("FUNSCRIPT_FORGE_DATA_DIR")
+    if _env_data:
+        st.session_state.output_dir = os.path.join(_env_data, "output")
+    else:
+        from utils import writable_base_dir as _writable_base_dir
+        st.session_state.output_dir = os.path.join(_writable_base_dir(), "output")
 
 if "pattern_catalog" not in st.session_state:
     from catalog.pattern_catalog import PatternCatalog
-    _catalog_path = os.path.join(_ROOT, "output", "pattern_catalog.json")
+    _catalog_path = os.path.join(st.session_state.output_dir, "pattern_catalog.json")
     try:
         st.session_state.pattern_catalog = PatternCatalog(_catalog_path)
     except Exception:

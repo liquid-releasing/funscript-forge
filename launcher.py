@@ -34,10 +34,21 @@ def _open_browser(url: str, delay: float = 3.0) -> None:
 
 
 def _base_dir() -> str:
-    """Return the project root whether running frozen or from source."""
+    """Return the *read-only* bundle root (PyInstaller) or project root (dev)."""
     if getattr(sys, "frozen", False):
-        # PyInstaller extracts everything under sys._MEIPASS
+        # PyInstaller extracts read-only assets under sys._MEIPASS.
         return sys._MEIPASS  # type: ignore[attr-defined]
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def _data_dir() -> str:
+    """Return the *writable* root for user data (output/, catalog, logs).
+
+    G32: sys._MEIPASS is read-only; writable files must live beside the exe.
+    In development this is identical to _base_dir() (the project root).
+    """
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)  # type: ignore[attr-defined]
     return os.path.dirname(os.path.abspath(__file__))
 
 
@@ -128,6 +139,9 @@ def main() -> None:
     # Mark this as a local desktop session so the UI can skip file-upload widgets.
     os.environ["FUNSCRIPT_FORGE_LOCAL"]      = "1"
     os.environ["FUNSCRIPT_FORGE_MEDIA_PORT"] = str(media_port)
+    # G32: tell the UI where to write user data (output/, catalog) — the
+    # writable root differs from sys._MEIPASS in a frozen executable.
+    os.environ["FUNSCRIPT_FORGE_DATA_DIR"]   = _data_dir()
 
     # Configure Streamlit via environment variables (before import).
     os.environ.setdefault("STREAMLIT_SERVER_PORT", str(port))

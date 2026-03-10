@@ -229,7 +229,13 @@ def render(project: "Project") -> None:
             e for e in recommended_plan
             if e["phrase_idx"] in _acc and e["phrase_idx"] not in _rej
         ]
-        if active_entries or blend_seams or final_smooth:
+        # UX1: require explicit confirmation before download to prevent accidental clicks
+        _confirmed = st.checkbox(
+            "I've reviewed the transforms and am ready to download",
+            key="export_confirmed",
+            help="Check this box to enable the download button.",
+        )
+        if (active_entries or blend_seams or final_smooth) and _confirmed:
             dl_bytes = _build_download_bytes(
                 project, phrases, full_plan,
                 blend_seams=blend_seams,
@@ -247,6 +253,7 @@ def render(project: "Project") -> None:
                 "⬇ Download edited funscript",
                 disabled=True,
                 type="primary",
+                help="Review transforms above and check the confirmation box to enable." if not _confirmed else "Add transforms or enable post-processing to download.",
             )
 
     st.divider()
@@ -548,7 +555,11 @@ def _render_recommended(plan: List[dict]) -> None:
 # ------------------------------------------------------------------
 
 def _render_export_preview(project, assessment_dict: dict, plan: List[dict]) -> None:
-    """Render a static (non-interactive) chart of the proposed export actions."""
+    """Render a static (non-interactive) chart of the proposed export actions.
+
+    F3: a Before/After toggle overlays the original actions in grey so the
+    user can see exactly what the transforms changed.
+    """
     from visualizations.chart_data import compute_chart_data, compute_annotation_bands
     from visualizations.funscript_chart import FunscriptChart
 
@@ -559,6 +570,14 @@ def _render_export_preview(project, assessment_dict: dict, plan: List[dict]) -> 
     rejected: set = st.session_state.get("export_rejected", set())
     accepted: set = st.session_state.get("export_accepted", set())
     preview_actions = _apply_plan_transforms(original_actions, plan, rejected, accepted)
+
+    # F3: Before/After toggle
+    show_original = st.checkbox(
+        "Show original (Before) overlay",
+        value=False,
+        key="export_preview_show_original",
+        help="Overlay the unmodified funscript in grey so you can compare Before vs After.",
+    )
 
     duration_ms = project.assessment.duration_ms
     bands  = compute_annotation_bands(assessment_dict)
@@ -573,17 +592,36 @@ def _render_export_preview(project, assessment_dict: dict, plan: List[dict]) -> 
         def has_zoom(self):      return False
         def has_selection(self): return False
 
+    import plotly.graph_objects as go
+
     fig = chart._build_figure(_StaticVS(), height=260)
+
+    if show_original:
+        # Overlay original positions as a semi-transparent grey line.
+        orig_ts  = [a["at"]  for a in original_actions]
+        orig_pos = [a["pos"] for a in original_actions]
+        fig.add_trace(go.Scatter(
+            x=orig_ts, y=orig_pos,
+            mode="lines",
+            line={"color": "rgba(180,180,180,0.45)", "width": 1},
+            name="Before",
+            showlegend=True,
+            hoverinfo="skip",
+        ))
+
     st.plotly_chart(
         fig,
         config={"displayModeBar": False, "staticPlot": True},
         key="export_preview_chart",
     )
     n_actions = len(preview_actions)
-    st.caption(
+    caption = (
         f"Export preview: {n_actions:,} actions after applying selected transforms. "
         "Colour represents stroke velocity (blue = slow, red = fast)."
     )
+    if show_original:
+        caption += " Grey overlay = original (Before)."
+    st.caption(caption)
 
     n_active = sum(
         1 for e in plan
