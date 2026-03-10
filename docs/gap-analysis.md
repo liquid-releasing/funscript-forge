@@ -57,7 +57,7 @@ Items marked ✅ are resolved in the current codebase.
 | --- | --- | --- |
 | G30 | PyInstaller Windows build pipeline | ✅ `launcher.py`, `funscript_forge.spec`, `build.bat` created; untested against real funscripts |
 | G31 | macOS build | ✅ `build.sh` with `.icns` generation via `sips`/`iconutil`; GitHub Actions matrix job created |
-| G32 | Writable paths for frozen exe | `output/` must sit next to `sys.executable` in `_MEIPASS`; `cli.py` / `project.py` / `pattern_catalog.py` not yet patched |
+| G32 | ✅ Writable paths for frozen exe | `writable_base_dir()` in `utils.py`; launcher exports `FUNSCRIPT_FORGE_DATA_DIR`; `app.py` uses env var with fallback |
 | G33 | Windows installer | NSIS or Inno Setup wrapper not yet created |
 | G34 | Auto-update mechanism | `check_for_update()` on startup comparing `VERSION` against latest GitHub Release tag |
 | G35 | GitHub Release artifact | `VERSION` file + `release.yml` workflow created; release process not fully documented |
@@ -114,7 +114,7 @@ Items marked ✅ are resolved in the current codebase.
 
 | # | Title | File | Priority |
 | --- | --- | --- | --- |
-| UX1 | No confirmation dialog on Download — accidental click discards session | `export_panel.py` | Medium |
+| UX1 | ✅ No confirmation dialog on Download — accidental click discards session | `export_panel.py` | Medium |
 | UX2 | No explanation of why a "Recommended" transform disappears when manual is applied | `export_panel.py` | Low |
 | UX3 | Assessment details collapsed by default — users miss the "Focus" edit buttons | `app.py` / `viewer.py` | Low |
 | UX4 | No warning when a work item window covers the entire funscript duration | `work_items.py` | Medium |
@@ -130,13 +130,13 @@ Items marked ✅ are resolved in the current codebase.
 | --- | --- | --- | --- |
 | F1 | Analyzer settings (min phrase length, amplitude sensitivity) reset every session | `app.py` | Low |
 | F2 | Export produces only standard funscript JSON; no CSV or device-specific format | `export_panel.py` | Low |
-| F3 | No full-funscript Before/After comparison in the Export preview | `export_panel.py` | Low–Medium |
+| F3 | ✅ No full-funscript Before/After comparison in the Export preview | `export_panel.py` | Low–Medium |
 | F4 | Transform Catalog has no search or category filter | `transform_catalog.py` | Low |
 | F5 | No `batch-assess` / `batch-transform` CLI command; files processed one at a time | `cli.py` | Low |
 | F6 | Only Ctrl+Z/Y/S mapped — no shortcuts for Accept, Next phrase, Apply to all | `app.py` | Low |
 | F7 | Export change log is embedded in the funscript only; no human-readable report | `export_panel.py` | Low |
 | F8 | No Validate button in Work Items tab — overlap and bounds errors surface only at export | `work_items.py` | Medium |
-| F9 | App does not remember the last opened file; user must re-navigate on every restart | `app.py` | Low |
+| F9 | ✅ App does not remember the last opened file — resolved via `recent_funscripts.json`; most-recent file is auto-loaded on startup in local mode | `app.py` | Low |
 | F10 | No formal funscript schema (JSON Schema); format assumptions undocumented | — | Medium |
 
 ---
