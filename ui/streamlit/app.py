@@ -189,6 +189,7 @@ def _sidebar() -> None:
             st.session_state.last_loaded_file = selected_file
             st.session_state.view_state       = ViewState()
             st.session_state.export_rejected  = set()
+            st.session_state.export_accepted  = set()
 
             # Auto-update the pattern catalog with this funscript's tagged phrases
             try:

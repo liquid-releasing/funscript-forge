@@ -193,7 +193,7 @@ def _detail_fragment(
         st.write("")
         _render_nav_buttons(phrases, phrase_idx, view_state, duration_ms)
         st.write("")
-        _render_save_cancel(phrases, original_actions, view_state)
+        _render_save_cancel(phrase_idx, view_state)
 
 
 # ------------------------------------------------------------------
@@ -711,9 +711,9 @@ def _render_nav_buttons(phrases: list, phrase_idx: int, view_state, duration_ms:
 # Save / Cancel buttons
 # ------------------------------------------------------------------
 
-def _render_save_cancel(phrases: list, original_actions: list, view_state) -> None:
+def _render_save_cancel(phrase_idx: int, view_state) -> None:
     """Accept stores the current transform and returns to the phrase selector.
-    Cancel discards all stored transforms and returns to phrase selector.
+    Cancel discards only this phrase's proposed transform and returns to the selector.
     """
     col_save, col_cancel = st.columns(2)
     with col_save:
@@ -736,19 +736,19 @@ def _render_save_cancel(phrases: list, original_actions: list, view_state) -> No
             "✕ Cancel",
             key="pd_cancel",
             width="stretch",
-            help="Discard transforms and return to phrase selector",
+            help="Discard this phrase's transform and return to phrase selector",
         ):
-            _return_to_selector(view_state)
-
-
-def _return_to_selector(view_state) -> None:
-    """Clear transforms + selection and force a fresh phrase-selector chart."""
-    _clear_transform_state()
-    view_state.clear_selection()
-    st.session_state.phrase_sel_chart_instance = (
-        st.session_state.get("phrase_sel_chart_instance", 0) + 1
-    )
-    st.rerun(scope="app")
+            # Clear only the current phrase's transform keys, leave others intact
+            st.session_state.pop(f"phrase_transform_{phrase_idx}", None)
+            st.session_state.pop(f"transform_sel_{phrase_idx}", None)
+            for k in [k for k in st.session_state
+                      if k.startswith(f"param_{phrase_idx}_")]:
+                st.session_state.pop(k, None)
+            view_state.clear_selection()
+            st.session_state.phrase_sel_chart_instance = (
+                st.session_state.get("phrase_sel_chart_instance", 0) + 1
+            )
+            st.rerun(scope="app")
 
 
 def build_edited_actions(phrases: list, original_actions: list) -> list:
@@ -780,10 +780,6 @@ def build_edited_actions(phrases: list, original_actions: list) -> list:
 
     return result
 
-
-def _clear_transform_state() -> None:
-    for k in [k for k in st.session_state if k.startswith("phrase_transform_")]:
-        del st.session_state[k]
 
 
 # ------------------------------------------------------------------
