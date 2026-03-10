@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import copy
 import json
+import os
+from datetime import datetime
 from typing import TYPE_CHECKING, Dict, List, Optional
 
 import streamlit as st
@@ -32,6 +34,32 @@ _HEADERS_DONE  = ["#", "Time", "Dur (s)", "Transform", "Source", "BPM", "Cycles"
 
 _COL_W_REC     = [0.4, 2.8, 1.0, 3.2, 2.0, 1.5, 0.5, 0.5, 0.5]
 _HEADERS_REC   = ["#", "Time", "Dur (s)", "Transform", "BPM", "Cycles", "", "", ""]
+
+
+# ------------------------------------------------------------------
+# Output integrity helpers (#9 position clamp, #10 dedup/sort)
+# ------------------------------------------------------------------
+
+def _clamp_sort_dedup(actions: list) -> int:
+    """Sort by timestamp, deduplicate (last pos wins for same `at`), clamp pos to [0, 100].
+
+    Mutates *actions* in-place.  Returns the number of actions that were clamped.
+    """
+    # Sort by timestamp
+    actions.sort(key=lambda a: a["at"])
+    # Deduplicate: keep last pos written for each timestamp
+    seen: Dict[int, int] = {}
+    for a in actions:
+        seen[a["at"]] = a["pos"]
+    actions[:] = [{"at": t, "pos": p} for t, p in seen.items()]
+    # Clamp
+    clamp_count = 0
+    for a in actions:
+        clamped = max(0, min(100, a["pos"]))
+        if clamped != a["pos"]:
+            clamp_count += 1
+            a["pos"] = clamped
+    return clamp_count
 
 
 # ------------------------------------------------------------------
@@ -147,6 +175,24 @@ def render(project: "Project") -> None:
     else:
         st.markdown("#### Recommended transforms &nbsp; ⬜ none will be exported")
     _render_recommended(recommended_plan)
+
+    # ----------------------------------------------------------------
+    # Clamp warning (#9)
+    # ----------------------------------------------------------------
+    clamp_count = st.session_state.get("export_clamp_count", 0)
+    if clamp_count > 0:
+        st.warning(
+            f"⚠️ {clamp_count} action{'s' if clamp_count != 1 else ''} were clamped to "
+            f"the valid range [0, 100] after transforms. "
+            f"Check amplitude settings if this is unexpected."
+        )
+
+    st.divider()
+
+    # ----------------------------------------------------------------
+    # Section 3 — Full pipeline (BPM Transformer + Window Customizer)
+    # ----------------------------------------------------------------
+    _render_pipeline_section(project)
 
 
 # ------------------------------------------------------------------
@@ -428,6 +474,45 @@ def _render_export_preview(project, assessment_dict: dict, plan: List[dict]) -> 
 
 
 # ------------------------------------------------------------------
+# Export log (#12)
+# ------------------------------------------------------------------
+
+def _build_export_log(
+    project,
+    plan: List[dict],
+    rejected: set,
+    accepted: set,
+    blend_seams: bool,
+    final_smooth: bool,
+    clamp_count: int,
+) -> dict:
+    """Build a structured log of what was applied, for embedding in the export JSON."""
+    applied = []
+    for entry in plan:
+        idx = entry["phrase_idx"]
+        if idx in rejected:
+            continue
+        if entry.get("source") == "Recommended" and idx not in accepted:
+            continue
+        applied.append({
+            "phrase_idx": idx,
+            "time":       f"{ms_to_timestamp(entry['start_ms'])} → {ms_to_timestamp(entry['end_ms'])}",
+            "transform":  entry["tx_key"],
+            "parameters": entry.get("param_values") or {},
+            "source":     entry["source"],
+        })
+    return {
+        "forge_version":  "0.5.0",
+        "exported_at":    datetime.now().isoformat(),
+        "source_file":    os.path.basename(project.funscript_path),
+        "transforms":     applied,
+        "blend_seams":    blend_seams,
+        "final_smooth":   final_smooth,
+        "clamp_warnings": clamp_count,
+    }
+
+
+# ------------------------------------------------------------------
 # Download builder
 # ------------------------------------------------------------------
 
@@ -465,6 +550,10 @@ def _apply_plan_transforms(
             for a in result:
                 if a["at"] in t_to_pos:
                     a["pos"] = t_to_pos[a["at"]]
+
+    # #9 clamp to [0, 100]  +  #10 sort and deduplicate timestamps
+    clamp_count = _clamp_sort_dedup(result)
+    st.session_state["export_clamp_count"] = clamp_count
     return result
 
 
@@ -496,6 +585,128 @@ def _build_download_bytes(
         if spec:
             result = spec.apply(result, None) or result
 
+    # blend_seams / final_smooth are post-plan — clamp again after them
+    if blend_seams or final_smooth:
+        _clamp_sort_dedup(result)
+
+    # #12 embed export log so the file is self-documenting
+    log = _build_export_log(
+        project, plan, rejected, accepted, blend_seams, final_smooth,
+        st.session_state.get("export_clamp_count", 0),
+    )
     out = dict(fs_data)
-    out["actions"] = result
+    out["actions"]    = result
+    out["_forge_log"] = log
     return json.dumps(out, indent=2).encode()
+
+
+# ------------------------------------------------------------------
+# Full pipeline section (#4 — BPM Transformer + Window Customizer)
+# ------------------------------------------------------------------
+
+def _render_pipeline_section(project) -> None:
+    """Expander section: run the full backend pipeline and offer a download."""
+    from pattern_catalog.config import TransformerConfig
+
+    with st.expander("Run full pipeline — BPM Transformer + Window Customizer", expanded=False):
+        st.caption(
+            "Stage 1 applies a BPM-threshold amplitude transform to every phrase. "
+            "Stage 2 applies your Work Item windows (performance / break / raw) on top. "
+            "The result is independent of the phrase-editor transforms above."
+        )
+
+        col_a, col_b = st.columns(2)
+        with col_a:
+            bpm_threshold = st.slider(
+                "BPM threshold", min_value=60.0, max_value=200.0,
+                value=float(st.session_state.get("bpm_threshold", 120.0)),
+                step=5.0, key="pipeline_bpm_threshold",
+                help="Phrases at or above this BPM receive the amplitude transform.",
+            )
+            amplitude_scale = st.slider(
+                "Amplitude scale", min_value=0.1, max_value=3.0,
+                value=2.0, step=0.1, key="pipeline_amplitude_scale",
+                help="Positions are scaled around the midpoint (50) by this factor.",
+            )
+        with col_b:
+            run_customizer = st.checkbox(
+                "Apply Work Item windows (Stage 2)",
+                value=True, key="pipeline_run_customizer",
+                help="Uses performance / break / raw windows defined in the Work Items tab.",
+            )
+            n_perf = len(project.performance_windows())
+            n_brk  = len(project.break_windows())
+            n_raw  = len(project.raw_windows())
+            st.caption(
+                f"Work items: {n_perf} performance · {n_brk} break · {n_raw} raw"
+            )
+
+        if st.button("▶ Run Pipeline", key="pipeline_run_btn", type="primary"):
+            from ui.common.pipeline import run_pipeline_in_memory
+            tcfg = TransformerConfig(
+                bpm_threshold=bpm_threshold,
+                amplitude_scale=amplitude_scale,
+            )
+            try:
+                actions, pipe_log = run_pipeline_in_memory(
+                    funscript_path=project.funscript_path,
+                    assessment=project.assessment,
+                    transformer_config=tcfg,
+                    performance_windows=project.performance_windows() if run_customizer else None,
+                    break_windows=project.break_windows()             if run_customizer else None,
+                    raw_windows=project.raw_windows()                 if run_customizer else None,
+                )
+                # Clean up result
+                clamp_count = _clamp_sort_dedup(actions)
+                st.session_state["pipeline_result"] = {
+                    "actions":     actions,
+                    "log":         pipe_log,
+                    "clamp_count": clamp_count,
+                    "source_file": project.funscript_path,
+                }
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Pipeline error: {exc}")
+
+        # Show result if available
+        pipe_res = st.session_state.get("pipeline_result")
+        if pipe_res and pipe_res.get("source_file") == project.funscript_path:
+            actions     = pipe_res["actions"]
+            pipe_log    = pipe_res["log"]
+            clamp_count = pipe_res.get("clamp_count", 0)
+
+            st.success(
+                f"Pipeline complete — {len(actions)} actions. "
+                f"BPM threshold: {pipe_log['transformer']['bpm_threshold']} · "
+                f"Amplitude scale: {pipe_log['transformer']['amplitude_scale']} · "
+                f"Customizer: {'yes' if pipe_log['customizer_applied'] else 'no'}"
+            )
+            if clamp_count:
+                st.warning(f"{clamp_count} action(s) clamped to [0, 100].")
+
+            # Build download bytes
+            with open(project.funscript_path, encoding="utf-8") as f:
+                fs_data = json.load(f)
+            out = dict(fs_data)
+            out["actions"]    = actions
+            out["_forge_log"] = {
+                "forge_version":  "0.5.0",
+                "exported_at":    datetime.now().isoformat(),
+                "source_file":    os.path.basename(project.funscript_path),
+                "pipeline":       pipe_log,
+                "clamp_warnings": clamp_count,
+            }
+            dl_bytes = json.dumps(out, indent=2).encode()
+
+            col_dl, col_clr = st.columns([3, 1])
+            col_dl.download_button(
+                "⬇ Download pipeline result",
+                data=dl_bytes,
+                file_name=f"{project.name}_pipeline.funscript",
+                mime="application/json",
+                type="primary",
+                key="pipeline_download_btn",
+            )
+            if col_clr.button("✕ Clear", key="pipeline_clear_btn"):
+                del st.session_state["pipeline_result"]
+                st.rerun()
