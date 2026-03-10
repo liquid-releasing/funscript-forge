@@ -704,20 +704,13 @@ def _render_welcome() -> None:
     """Onboarding welcome screen shown before any funscript is loaded."""
     _media = lambda name: os.path.join(_ROOT, "media", name)  # noqa: E731
 
-    # App icon + wide wordmark logo side by side
-    _il, _ic, _ir = st.columns([1, 1, 4])
+    # Centered wide wordmark logo
+    _il, _ic, _ir = st.columns([1, 4, 1])
     with _ic:
-        if os.path.exists(_media("hammer-striking-anvil.png")):
-            st.image(_media("hammer-striking-anvil.png"), width="stretch")
-    with _ir:
         if os.path.exists(_media("funscriptforge-logo-wide.png")):
             st.image(_media("funscriptforge-logo-wide.png"), width="stretch")
         elif os.path.exists(_media("funscriptforge.png")):
             st.image(_media("funscriptforge.png"), width="stretch")
-
-    # Cinematic atmosphere banner
-    if os.path.exists(_media("forge-social-banner.png")):
-        st.image(_media("forge-social-banner.png"), width="stretch")
 
     st.markdown(
         "**Funscript Forge** analyses funscripts, detects phrase structure and motion "
