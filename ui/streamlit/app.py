@@ -185,6 +185,12 @@ def _funscript_picker_local(output_dir: str) -> str | None:
     Returns the selected absolute path, or ``None`` if nothing valid is chosen.
     """
     st.sidebar.subheader("Funscript Project")
+    _proj = st.session_state.get("project")
+    if _proj and _proj.is_loaded:
+        st.sidebar.markdown(f"**{_proj.display_name}**")
+        _desc = _proj.get_description()
+        if _desc:
+            st.sidebar.caption(_desc)
     recents = _load_recents(output_dir)
     options = recents + [_BROWSE_SENTINEL]
     sel = st.sidebar.selectbox(
@@ -284,6 +290,12 @@ def _sidebar() -> None:
     else:
         # Web mode: file upload widgets (kept for the web UI deployment).
         st.sidebar.subheader("Funscript Project")
+        _proj = st.session_state.get("project")
+        if _proj and _proj.is_loaded:
+            st.sidebar.markdown(f"**{_proj.display_name}**")
+            _desc = _proj.get_description()
+            if _desc:
+                st.sidebar.caption(_desc)
         uploaded = st.sidebar.file_uploader(
             "Upload a funscript",
             type=["funscript"],
@@ -475,16 +487,51 @@ def _sidebar() -> None:
     project: Project | None = st.session_state.project
     if project and project.is_loaded:
         s = project.summary()
-        st.sidebar.markdown(f"**{project.display_name}**")
-        desc = project.get_description()
-        if desc:
-            st.sidebar.caption(desc)
-        elapsed = st.session_state.last_assessment_elapsed
-        timing_str = f"  |  assessed in {elapsed:.1f}s" if elapsed is not None else ""
-        st.sidebar.caption(
-            f"Duration: {s['duration']}  |  Avg BPM: {s['bpm']:.1f}{timing_str}\n\n"
-            f"{s['phrases']} phrases  •  {s['bpm_transitions']} transitions"
+
+        # --- Project Specs ---
+        st.sidebar.markdown("**Project Specs**")
+        _phrases_data = project.assessment.to_dict().get("phrases", [])
+        _bpms = [p["bpm"] for p in _phrases_data if p.get("bpm")]
+        _elapsed = st.session_state.last_assessment_elapsed
+        _spec_lines = [
+            f"● {s['phrases']} phrases",
+            f"● {s['bpm_transitions']} transitions",
+            f"● {s['patterns']} patterns",
+        ]
+        if _bpms:
+            _spec_lines.append(
+                f"● BPM: {s['bpm']:.0f} avg  ·  {min(_bpms):.0f}–{max(_bpms):.0f} range"
+            )
+        if _elapsed is not None:
+            _spec_lines.append(f"● Assessed in {_elapsed:.1f}s")
+        st.sidebar.caption("\n\n".join(_spec_lines))
+
+        # --- Available Transforms ---
+        from pattern_catalog.phrase_transforms import get_transforms_by_category
+        _tx_cats = get_transforms_by_category()
+        st.sidebar.markdown("**Available Transforms**")
+        st.sidebar.caption("\n\n".join(
+            f"● {cat}: {len(pairs)}" for cat, pairs in _tx_cats.items()
+        ))
+
+        # --- Editing Progress (only once work has started) ---
+        _n_phrases = s["phrases"]
+        _phrases_edited = sum(
+            1 for i in range(_n_phrases)
+            if st.session_state.get(f"phrase_transform_chain_{i}")
         )
+        _pe_applied = sum(
+            1 for k, v in st.session_state.items()
+            if k.startswith("pe_apply_") and v is True
+        )
+        if _phrases_edited or _pe_applied:
+            st.sidebar.markdown("**Editing Progress**")
+            _prog_lines = []
+            if _n_phrases:
+                _prog_lines.append(f"● Phrases edited: {_phrases_edited} / {_n_phrases}")
+            if _pe_applied:
+                _prog_lines.append(f"● Pattern instances applied: {_pe_applied}")
+            st.sidebar.caption("\n\n".join(_prog_lines))
 
         st.sidebar.markdown("---")
 
