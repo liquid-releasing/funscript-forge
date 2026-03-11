@@ -295,32 +295,31 @@ class Project:
     @property
     def display_name(self) -> str:
         """User-defined name if set, else the filename-derived name."""
-        return self.custom_name.strip() or self.name
+        # getattr guards against old session-state objects that pre-date this field
+        return getattr(self, "custom_name", "").strip() or self.name
 
     def auto_description(self) -> str:
-        """Generate a one-sentence description from the assessment data."""
+        """Generate a verbose description from assessment metadata."""
         if not self.assessment:
             return ""
         s = self.summary()
-        duration = s.get("duration", "")
-        bpm      = s.get("bpm", 0.0)
+        parts = []
+        if s.get("duration"):
+            parts.append(f"This project is {s['duration']} long.")
+        if s.get("bpm"):
+            parts.append(f"It averages {s['bpm']:.0f} beats per minute.")
         phrases  = s.get("phrases", 0)
         patterns = s.get("patterns", 0)
-        bpm_str  = f"{bpm:.0f} BPM" if bpm else ""
-        parts = []
-        if duration:
-            parts.append(duration)
-        if bpm_str:
-            parts.append(bpm_str)
-        if phrases:
-            parts.append(f"{phrases} phrase{'s' if phrases != 1 else ''}")
-        if patterns:
-            parts.append(f"{patterns} pattern{'s' if patterns != 1 else ''}")
-        return ", ".join(parts) + "." if parts else ""
+        if phrases or patterns:
+            parts.append(
+                f"You can edit based on {phrases} phrase{'s' if phrases != 1 else ''}"
+                f" and {patterns} pattern{'s' if patterns != 1 else ''}."
+            )
+        return " ".join(parts)
 
     def get_description(self) -> str:
         """User description if set, else auto-generated from assessment."""
-        return self.description.strip() or self.auto_description()
+        return getattr(self, "description", "").strip() or self.auto_description()
 
     @property
     def is_loaded(self) -> bool:
