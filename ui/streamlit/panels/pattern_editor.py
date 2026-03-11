@@ -349,7 +349,7 @@ def _detail_fragment(
     st.subheader(f"{display_name}  ·  {n_instances} phrase{'s' if n_instances != 1 else ''}")
     if meta:
         st.caption(meta.description)
-        st.caption(f"Suggested fix: **{meta.suggested_transform}** — {meta.fix_hint}")
+        st.caption(f"Suggested transform: **{meta.suggested_transform}** — {meta.fix_hint}")
 
     # Catalog context for this tag
     catalog = st.session_state.get("pattern_catalog")
@@ -528,8 +528,8 @@ def _render_instance_table(
 
         apply = st.session_state.get(f"pe_apply_{selected_label}_{i}", False)
         rows.append({
-            "#":         i + 1,
             "Apply":     apply,
+            "#":         i + 1,
             "Pattern":   cy.get("pattern_label", "—"),
             "Start":     ms_to_timestamp(cy["start_ms"]),
             "End":       ms_to_timestamp(cy["end_ms"]),
@@ -553,8 +553,8 @@ def _render_instance_table(
         key=f"pe_instance_table_{selected_label}",
         disabled=_READ_ONLY,
         column_config={
+            "Apply":     st.column_config.CheckboxColumn("✓", default=False, width="small"),
             "#":         st.column_config.NumberColumn(width="small"),
-            "Apply":     st.column_config.CheckboxColumn("Apply", default=False, width="small"),
             "Pattern":   st.column_config.TextColumn(width="medium"),
             "Start":     st.column_config.TextColumn(width="small"),
             "End":       st.column_config.TextColumn(width="small"),

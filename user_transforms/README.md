@@ -26,7 +26,7 @@ Each file is an array of transform objects:
 passthrough, amplitude_scale, normalize, boost_contrast, shift,
 recenter, clamp_upper, clamp_lower, invert, smooth, blend_seams,
 final_smooth, break, waiting, performance, beat_accent, three_one,
-halve_tempo, stroke, drift, tide
+halve_tempo, stroke, drift, tide, funnel
 
 ## Notes
 

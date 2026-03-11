@@ -80,6 +80,16 @@ _META: List[Tuple[str, str, List[Tuple[str, List[str]]]]] = [
             ("Generated Shapes", ["stroke", "drift", "tide"]),
         ],
     ),
+    (
+        "Funnel",
+        "Funnel transforms create a progressive energy arc across a phrase — ramping "
+        "from small, compressed strokes to large, expansive strokes (funnel open) or "
+        "the reverse (funnel close). Both the center position and the stroke amplitude "
+        "scale linearly, creating a visually ordered ramp-up or ramp-down shape.",
+        [
+            ("Energy Funnel", ["funnel"]),
+        ],
+    ),
 ]
 
 # Best-fit behavioral tags for each transform key
@@ -105,6 +115,7 @@ _TAG_FIT: Dict[str, List[str]] = {
     "stroke":          ["Replacement — clean full stroke", "any phrase needing a simple oscillation"],
     "drift":           ["Replacement — high plateau with one slow dip", "Drift behavioral pattern"],
     "tide":            ["Replacement — fast oscillations on slow center wave", "sustained intensity with ebb-and-flow"],
+    "funnel":          ["Ramp behavioral tag", "transition sections", "energy ramp-up or ramp-down", "Ambient"],
 }
 
 # Per-transform preview duration overrides (ms).  Replacement transforms need
@@ -332,17 +343,128 @@ def _render_transform_card(spec) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Tag Catalog
+# ---------------------------------------------------------------------------
+
+def _render_tag_chart(
+    actions: List[Dict],
+    color: str,
+    title: str,
+    height: int = 140,
+) -> go.Figure:
+    """Thin wrapper around _make_chart with a smaller default height for tag cards."""
+    return _make_chart(actions, color, title, height=height)
+
+
+def _render_tag_catalog() -> None:
+    """Render the Tag Catalog section — one card per behavioral tag."""
+    from assessment.classifier import TAGS
+    from pattern_catalog.phrase_transforms import TRANSFORM_CATALOG
+
+    st.markdown("## Tag Catalog")
+    st.info(
+        "Behavioral tags describe patterns that may need attention. "
+        "Each phrase is automatically tagged during assessment. "
+        "Use the Pattern Editor tab to browse and fix phrases by tag.",
+        icon=None,
+    )
+
+    # Collect catalog stats if available (best-effort)
+    catalog = None
+    try:
+        import streamlit as _st
+        catalog = _st.session_state.get("pattern_catalog")
+    except Exception:
+        pass
+    catalog_stats = catalog.get_tag_stats() if catalog else {}
+
+    for tag_key, meta in TAGS.items():
+        with st.expander(f"**{meta.label}** — {meta.description[:60]}…", expanded=False):
+            col_info, col_charts = st.columns([1, 2])
+
+            with col_info:
+                st.markdown(f"### {meta.label}")
+                st.write(meta.description)
+
+                # Characteristics from catalog stats
+                cs = catalog_stats.get(tag_key, {})
+                if cs.get("count", 0) > 0:
+                    st.caption(
+                        f"Typical BPM {cs['bpm_min']}–{cs['bpm_max']} "
+                        f"· span {cs['span_min']}–{cs['span_max']}"
+                    )
+
+                # Suggested transform
+                spec = TRANSFORM_CATALOG.get(meta.suggested_transform)
+                if spec:
+                    st.caption(f"Suggested transform: **{spec.name}**")
+                    st.caption(meta.fix_hint)
+                else:
+                    st.caption(f"Suggested transform: **{meta.suggested_transform}**")
+                    st.caption(meta.fix_hint)
+
+            with col_charts:
+                if not TRANSFORM_CATALOG.get(meta.suggested_transform):
+                    continue
+                spec = TRANSFORM_CATALOG[meta.suggested_transform]
+                preview_ms = _PREVIEW_DURATION_MS.get(meta.suggested_transform, _DEFAULT_PREVIEW_MS)
+                before_actions = _make_preview_actions(preview_ms)
+
+                if spec.structural and spec.key not in _SHOW_BEFORE:
+                    # Replacement — just show the output
+                    default_params = {pk: p.default for pk, p in spec.params.items()}
+                    after_actions = spec.apply(before_actions, default_params)
+                    st.plotly_chart(
+                        _render_tag_chart(after_actions, _GREEN, f"Output — {spec.name}"),
+                        width="stretch",
+                        config={"displayModeBar": False},
+                        key=f"tc_tag_after_{tag_key}",
+                    )
+                else:
+                    c_left, c_right = st.columns(2)
+                    with c_left:
+                        st.plotly_chart(
+                            _render_tag_chart(before_actions, _BLUE, "Before"),
+                            width="stretch",
+                            config={"displayModeBar": False},
+                            key=f"tc_tag_before_{tag_key}",
+                        )
+                    with c_right:
+                        default_params = {pk: p.default for pk, p in spec.params.items()}
+                        after_actions = spec.apply(before_actions, default_params)
+                        st.plotly_chart(
+                            _render_tag_chart(after_actions, _GREEN, f"After — {spec.name}"),
+                            width="stretch",
+                            config={"displayModeBar": False},
+                            key=f"tc_tag_after_{tag_key}",
+                        )
+
+    st.markdown("### Behavior Tags (summary)")
+    rows = []
+    for tag_key, meta in TAGS.items():
+        cs = catalog_stats.get(tag_key, {})
+        rows.append({
+            "Tag":                 meta.label,
+            "Description":         meta.description[:80] + ("…" if len(meta.description) > 80 else ""),
+            "Suggested Transform": meta.suggested_transform,
+            "Catalog Phrases":     cs.get("count", "—"),
+        })
+    if rows:
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+
+
+# ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
 
 def render() -> None:
-    """Render the full Transform Catalog panel."""
+    """Render the full Catalogs panel (Transform Catalog + Tag Catalog)."""
     from pattern_catalog.phrase_transforms import TRANSFORM_CATALOG
 
-    st.subheader("Transform Catalog")
+    st.subheader("Catalogs")
     st.caption(
-        "Reference guide for all phrase transforms. "
+        "Reference guides for all phrase transforms and behavioral tags. "
         "Adjust parameters to see their effect live on the preview waveform."
     )
 
@@ -369,6 +491,10 @@ def render() -> None:
             ):
                 for spec in specs:
                     _render_transform_card(spec)
+
+        # Tag Catalog appears directly under the Behavior section
+        if meta_label == "Behavior":
+            _render_tag_catalog()
 
     # Auto-display any plugin transforms not already in a meta-section
     extra: Dict[str, list] = {}

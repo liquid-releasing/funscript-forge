@@ -236,6 +236,9 @@ def _detail_fragment(
             st.caption("*(not saved)*")
 
     with col_transform:
+        # Nav always at the top — matches Pattern Editor layout
+        _render_nav_buttons(phrases, phrase_idx, view_state, duration_ms)
+        st.write("")
         if split_mode:
             confirmed_split_ms = _render_split_controls(
                 phrase_idx, phrase, original_actions, view_state, duration_ms
@@ -244,10 +247,9 @@ def _detail_fragment(
                 _split_phrase(phrase_idx, confirmed_split_ms, view_state, duration_ms)
         else:
             _render_transform_controls(phrase, bpm_threshold, phrase_idx)
-        st.write("")
-        _render_nav_buttons(phrases, phrase_idx, view_state, duration_ms)
-        st.write("")
-        _render_save_cancel(phrase_idx, view_state)
+            st.write("")
+            _render_save_cancel(phrase_idx, view_state)
+            _render_edit_phrase(phrases, phrase_idx, view_state, duration_ms)
 
 
 # ------------------------------------------------------------------
@@ -539,17 +541,6 @@ def _render_transform_controls(phrase: dict, bpm_threshold: float, phrase_idx: i
         "param_values":  param_values,
     }
 
-    st.write("")
-    if st.button(
-        "✂ Split phrase",
-        key=f"split_start_{phrase_idx}",
-        help="Split this phrase into two at a chosen timestamp",
-        width="stretch",
-    ):
-        st.session_state[f"split_mode_{phrase_idx}"] = True
-        _clear_split_state(phrase_idx)
-        st.rerun(scope="fragment")
-
 
 # ------------------------------------------------------------------
 # Split phrase controls
@@ -578,7 +569,7 @@ def _render_split_controls(
     def _cancel():
         st.session_state.pop(f"split_mode_{phrase_idx}", None)
         _clear_split_state(phrase_idx)
-        st.rerun(scope="fragment")
+        st.rerun()
 
     # Fetch cycles within this phrase from the live assessment
     try:
@@ -817,6 +808,84 @@ def _render_save_cancel(phrase_idx: int, view_state) -> None:
         # Clear only the pending selection — the accepted chain is preserved
         _clear_picker_state(phrase_idx)
         st.rerun()
+
+
+# ------------------------------------------------------------------
+# Edit Phrase section — structural phrase edits (split, concat)
+# ------------------------------------------------------------------
+
+def _render_edit_phrase(
+    phrases: list,
+    phrase_idx: int,
+    view_state,
+    duration_ms: int,
+) -> None:
+    """Render the Edit Phrase section: Split and Concat with Next Phrase."""
+    phrase = phrases[phrase_idx]
+    n = len(phrases)
+
+    st.write("")
+    st.markdown("**Edit Phrase**")
+
+    # Split this phrase into two at a chosen cycle boundary
+    if st.button(
+        "✂ Split phrase",
+        key=f"split_start_{phrase_idx}",
+        help="Split this phrase into two at a chosen cycle boundary",
+        width="stretch",
+    ):
+        st.session_state[f"split_mode_{phrase_idx}"] = True
+        _clear_split_state(phrase_idx)
+        st.rerun()
+
+    # Concat with the next phrase
+    concat_disabled = (phrase_idx >= n - 1)
+    if st.button(
+        "⊕ Concat with next phrase",
+        key=f"concat_next_{phrase_idx}",
+        disabled=concat_disabled,
+        help=(
+            "Join this phrase with the following phrase into one larger phrase. "
+            "Useful for applying long-form transforms (e.g. Tide) across a bigger window."
+        ),
+        width="stretch",
+    ):
+        _concat_phrases(phrase_idx, view_state, duration_ms)
+
+
+def _concat_phrases(phrase_idx: int, view_state, duration_ms: int) -> None:
+    """Merge phrase_idx and phrase_idx+1 into a single phrase in the assessment."""
+    from models import Phrase as PhraseModel
+
+    project = st.session_state.project
+    phrases = project.assessment.phrases
+    if phrase_idx >= len(phrases) - 1:
+        return
+
+    a = phrases[phrase_idx]
+    b = phrases[phrase_idx + 1]
+
+    osc   = a.oscillation_count + b.oscillation_count
+    cyc   = a.cycle_count + b.cycle_count
+    label = a.pattern_label if a.pattern_label == b.pattern_label else f"{a.pattern_label}+{b.pattern_label}"
+
+    merged = PhraseModel(
+        start_ms=a.start_ms,
+        end_ms=b.end_ms,
+        pattern_label=label,
+        cycle_count=cyc,
+        description=f"{a.description} + {b.description}",
+        oscillation_count=osc,
+    )
+    merged.tags    = list(set(list(a.tags) + list(b.tags)))
+    merged.metrics = dict(a.metrics)  # keep first phrase metrics as baseline
+
+    phrases[phrase_idx : phrase_idx + 2] = [merged]
+
+    _clear_all_split_state()
+    view_state.set_selection(merged.start_ms, merged.end_ms)
+    st.session_state["phrase_table_ver"] = st.session_state.get("phrase_table_ver", 0) + 1
+    st.rerun()
 
 
 def build_edited_actions(phrases: list, original_actions: list) -> list:

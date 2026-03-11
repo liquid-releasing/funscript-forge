@@ -843,6 +843,51 @@ class _Tide(PhraseTransform):
         return result
 
 
+class _Ramp(PhraseTransform):
+    """Funnel-shaped energy ramp: progressive center shift + amplitude scaling.
+
+    Each action is re-expressed around a linearly interpolated center that
+    travels from ``start_center`` to ``end_center`` across the phrase.
+    At the same time, the distance from the center is scaled linearly from
+    ``start_scale`` to ``end_scale``, creating a funnel shape.
+
+    Ramp up (small → large): start_scale < end_scale, start_center < end_center
+    Ramp down (large → small): start_scale > end_scale, start_center > end_center
+
+    If the phrase already has apparent motion the funnel exaggerates it;
+    if motion is minimal a visible increasing/decreasing oscillation is produced.
+    """
+
+    def _transform(self, actions: list, p: dict) -> list:
+        if not actions:
+            return actions
+
+        start_center = float(p.get("start_center", 30))
+        end_center   = float(p.get("end_center",   70))
+        start_scale  = float(p.get("start_scale",  0.2))
+        end_scale    = float(p.get("end_scale",    1.0))
+
+        start_ms = actions[0]["at"]
+        end_ms   = actions[-1]["at"]
+        total_ms = max(1, end_ms - start_ms)
+
+        # Current phrase center (mean position)
+        positions      = [a["pos"] for a in actions]
+        current_center = sum(positions) / len(positions)
+
+        result = []
+        for a in actions:
+            frac   = (a["at"] - start_ms) / total_ms
+            target = start_center + (end_center  - start_center) * frac
+            scale  = start_scale  + (end_scale   - start_scale)  * frac
+            # Re-express position around the interpolated center at this scale
+            deviation = (a["pos"] - current_center) * scale
+            pos = max(0, min(100, round(target + deviation)))
+            result.append({"at": a["at"], "pos": pos})
+
+        return result
+
+
 # ------------------------------------------------------------------
 # Catalog
 # ------------------------------------------------------------------
@@ -1222,6 +1267,50 @@ TRANSFORM_CATALOG: Dict[str, PhraseTransform] = {
                 ),
             },
         ),
+        _Ramp(
+            key         = "funnel",
+            name        = "Funnel",
+            description = "Funnel-shaped energy ramp — progressively shifts the center and scales stroke amplitude from start to end, creating a visually ordered ramp-up or ramp-down.",
+            structural  = False,
+            params      = {
+                "start_center": TransformParam(
+                    label   = "Start center",
+                    type    = "int",
+                    default = 30,
+                    min_val = 0,
+                    max_val = 100,
+                    step    = 5,
+                    help    = "Center of gravity at the beginning of the phrase (0=bottom, 100=top).",
+                ),
+                "end_center": TransformParam(
+                    label   = "End center",
+                    type    = "int",
+                    default = 70,
+                    min_val = 0,
+                    max_val = 100,
+                    step    = 5,
+                    help    = "Center of gravity at the end of the phrase. Higher than start = ramp up; lower = ramp down.",
+                ),
+                "start_scale": TransformParam(
+                    label   = "Start amplitude scale",
+                    type    = "float",
+                    default = 0.2,
+                    min_val = 0.0,
+                    max_val = 2.0,
+                    step    = 0.05,
+                    help    = "Stroke amplitude multiplier at the start of the phrase. 0.2 = compressed; 1.0 = original size.",
+                ),
+                "end_scale": TransformParam(
+                    label   = "End amplitude scale",
+                    type    = "float",
+                    default = 1.0,
+                    min_val = 0.0,
+                    max_val = 2.0,
+                    step    = 0.05,
+                    help    = "Stroke amplitude multiplier at the end of the phrase. Values > 1 expand beyond original amplitude.",
+                ),
+            },
+        ),
     ]
 }
 
@@ -1249,6 +1338,8 @@ TRANSFORM_ORDER: List[str] = [
     "halve_tempo",
     # Replacement
     "stroke", "drift", "tide",
+    # Funnel
+    "funnel",
 ]
 
 
@@ -1272,6 +1363,8 @@ def suggest_transform(phrase: dict, bpm_threshold: float = 120.0):
     7.  drift     → recenter, target_center = 50
     8.  half_stroke → recenter, target_center = 50
     9.  drone     → beat_accent
+    10. ramp      → funnel (start/end center + amplitude scale from detected delta)
+    11. ambient   → waiting
 
     BPM fallbacks (no tag match):
     10. bpm < bpm_threshold                 → passthrough
@@ -1319,6 +1412,22 @@ def suggest_transform(phrase: dict, bpm_threshold: float = 120.0):
 
     if "drone" in tags:
         return ("beat_accent", {})
+
+    if "ramp" in tags:
+        ramp_delta = metrics.get("ramp_delta", 0.0)
+        if ramp_delta > 0:
+            # ramp up: start low, end high
+            return ("funnel", {"start_center": max(0, round(mean_pos - abs(ramp_delta) / 2)),
+                               "end_center":   min(100, round(mean_pos + abs(ramp_delta) / 2)),
+                               "start_scale":  0.2, "end_scale": 1.0})
+        else:
+            # ramp down: start high, end low
+            return ("funnel", {"start_center": min(100, round(mean_pos + abs(ramp_delta) / 2)),
+                               "end_center":   max(0, round(mean_pos - abs(ramp_delta) / 2)),
+                               "start_scale":  1.0, "end_scale": 0.2})
+
+    if "ambient" in tags:
+        return ("waiting", {})
 
     # BPM-based fallbacks when no tag matched
     if bpm < bpm_threshold:
