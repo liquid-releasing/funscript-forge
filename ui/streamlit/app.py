@@ -584,7 +584,7 @@ def _main() -> None:
     # The Phrase tab shows the Selector or Editor depending on view_state.has_selection(),
     # eliminating the need for JS-based programmatic tab navigation.
     tab_phrase, tab_pattern, tab_transforms, tab_export = st.tabs(
-        ["Phrases", "Patterns", "Transform Catalog", "Export"]
+        ["Phrases", "Patterns", "Catalogs", "Export"]
     )
 
     with tab_phrase:
@@ -676,7 +676,7 @@ def _render_welcome() -> None:
     _icons = [
         ("anvil.png",     "Phrase Selector",   "Analyse & select phrases"),
         ("worktable.png", "Pattern Editor",     "Shape motion patterns"),
-        ("oven.png",      "Transform Catalog",  "Apply & preview transforms"),
+        ("oven.png",      "Catalogs",           "Browse transforms & tag reference"),
     ]
     icon_cols = st.columns(len(_icons))
     for col, (img, label, desc) in zip(icon_cols, _icons):
