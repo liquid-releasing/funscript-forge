@@ -179,10 +179,29 @@ without creating a tag.
 | --- | --- |
 | `pyinstaller: command not found` | Run `pip install pyinstaller` and ensure `~/.local/bin` (Linux/Mac) or `%APPDATA%\Python\Scripts` (Windows) is on `PATH` |
 | Missing module at runtime | Add it to `hiddenimports` in `funscript_forge.spec` |
+| `PackageNotFoundError: No package metadata was found for streamlit` | `copy_metadata("streamlit")` in the spec bundles the dist-info; already present — re-run a clean build |
+| Browser opens to wrong port / "refused to connect" | `global.developmentMode` was `True` in the frozen context; fixed in `launcher.py` via `load_config_options({"global.developmentMode": False, ...})` before `bootstrap.run()` |
+| Two browser windows open (port 3000 + OS port) | Same root cause as above — `developmentMode=True` made Streamlit proxy its frontend to a non-existent dev server on port 3000 |
 | Streamlit can't find its static files | `collect_data_files("streamlit")` in the spec handles this; re-run a clean build |
 | macOS — "app is damaged" | Run `xattr -cr dist/FunscriptForge.app` to strip quarantine flag |
 | macOS — `.icns` not generated | Ensure you are running on macOS (not Windows/Linux); `sips` and `iconutil` are macOS-only |
 | Windows — antivirus flags the exe | Common false positive with PyInstaller; submit the file to your AV vendor as a false positive |
+
+### PyInstaller + Streamlit notes (for maintainers)
+
+These issues were discovered and fixed during the initial Windows packaging sprint:
+
+1. **`copy_metadata("streamlit")`** must be in `datas` in the spec — Streamlit calls
+   `importlib.metadata.version("streamlit")` at import time; without the dist-info folder
+   the frozen exe crashes immediately.
+
+2. **`global.developmentMode=False`** must be set explicitly — PyInstaller's frozen
+   environment triggers Streamlit's dev-mode heuristic, which proxies the frontend to
+   `localhost:3000` (a webpack dev server that doesn't exist in a packaged build).
+
+3. **`load_config_options(flag_options)` before `bootstrap.run()`** — the `flag_options`
+   argument passed to `bootstrap.run()` only installs file-change watchers; it does not
+   apply the options on startup. Call `load_config_options()` explicitly first.
 
 ---
 
