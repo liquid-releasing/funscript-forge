@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 # Copyright (c) 2026 Liquid Releasing. Licensed under the MIT License.
-# PyInstaller spec for Funscript Forge — cross-platform package.
+# PyInstaller spec for FunscriptForge — cross-platform package.
 #
 # Build with:
 #   pyinstaller funscript_forge.spec
@@ -8,7 +8,7 @@
 
 import os
 import sys
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
 
 _IS_MAC = sys.platform == "darwin"
 
@@ -40,6 +40,9 @@ for mod in ["models.py", "utils.py", "cli.py"]:
     if os.path.isfile(mod):
         datas.append((mod, "."))
 
+# Streamlit package metadata (importlib.metadata.version("streamlit") requires dist-info)
+datas += copy_metadata("streamlit")
+
 # Streamlit's own static web assets (HTML, JS, CSS)
 datas += collect_data_files("streamlit")
 
@@ -68,7 +71,6 @@ hiddenimports += [
     "pandas._libs.tslibs.np_datetime",
     "pandas._libs.tslibs.nattype",
     "numpy",
-    "numpy.core._methods",
     "numpy.lib.format",
     "matplotlib",
     "matplotlib.backends.backend_agg",
