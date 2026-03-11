@@ -51,6 +51,10 @@ sys.modules.setdefault("streamlit", _st_mock)
 # Project root on path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import ui.streamlit.panels.pattern_editor as _pe_mod  # noqa: E402
+# Guarantee the module uses our mock even if real streamlit was imported first
+_pe_mod.st = _st_mock
+
 from ui.streamlit.panels.pattern_editor import (   # noqa: E402
     _get_splits,
     _get_segments,

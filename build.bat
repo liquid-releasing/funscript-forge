@@ -1,6 +1,6 @@
 @echo off
 REM Copyright (c) 2026 Liquid Releasing. Licensed under the MIT License.
-REM Build script for Funscript Forge packaged executable.
+REM Build script for FunscriptForge packaged executable.
 REM
 REM Usage:
 REM   build.bat            — clean build into dist\FunscriptForge\
@@ -12,7 +12,7 @@ set SCRIPT_DIR=%~dp0
 cd /d "%SCRIPT_DIR%"
 
 echo ==========================================================
-echo  Funscript Forge — Windows Package Build
+echo  FunscriptForge — Windows Package Build
 echo ==========================================================
 echo.
 
