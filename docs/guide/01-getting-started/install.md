@@ -140,19 +140,7 @@ is open. Close that window to shut the app down.
 
 ---
 
-## Troubleshooting
-
-| Symptom | What to do |
-| --- | --- |
-| Browser opens but shows "refused to connect" | Wait a few more seconds and refresh the tab — the server is still starting |
-| App is slow on first load | Normal — the app compiles templates once on startup; subsequent loads are faster |
-| Windows Defender / antivirus blocks the exe | Add a folder exception, or see [Antivirus false positives](../../INSTALL.md#antivirus--gatekeeper-false-positives) |
-| macOS — "app is damaged" | Run `xattr -cr /Applications/FunscriptForge.app` in Terminal |
-| macOS — blocked on first launch | Right-click → Open → Open (one-time approval) |
-| Browser doesn't open automatically | Go to `http://localhost:6789` manually |
-| App crashes immediately | Check that you have at least 4 GB RAM free; close other heavy apps |
-
-Still stuck? [Ask the help assistant →](https://funscriptforge.com/help) *(coming soon)*
+Something not working? [Troubleshoot installing FunscriptForge →](../troubleshooting/install.md)
 
 ---
 
