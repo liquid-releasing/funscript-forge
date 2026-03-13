@@ -156,17 +156,7 @@ customization, every export improvement works at the phrase level.
 
 ---
 
-## Troubleshooting
-
-| Symptom | What to do |
-| --- | --- |
-| "File not found" error | Make sure you pasted the full absolute path, not a relative one. Try copying it again using the OS method above. |
-| Analysis completes but shows only 1 phrase | Your funscript may be uniform-tempo. That is common with generated scripts. FunscriptForge handles this — continue to the next step and it will make sense. |
-| Chart is blank / no waveform | The funscript file may be empty or malformed. Open it in a text editor and confirm it has `actions` data. |
-| App freezes during analysis | Very large files (2+ hours) can take 30+ seconds. Wait and check the progress indicator. If it is truly frozen, restart the app and try again. |
-| Progress shows "Phrases: 0" | This can happen with very short clips (under 10 seconds). The guide example file is a better starting point — see the overview page. TODO: link to example file once chosen. |
-
-Still stuck? [Ask the help assistant →](https://funscriptforge.com/help) *(coming soon)*
+Something not working? [Troubleshoot loading a script →](../troubleshooting/loading-a-script.md)
 
 ---
 
