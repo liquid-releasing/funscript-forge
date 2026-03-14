@@ -224,8 +224,12 @@ __marimo__/
 
 # test text
 test.txt
-test_funscript/*.mp4
-test_funscript/*.mov
+
+# test funscripts — private content, not for repo
+test_funscript/
+
+# demo funscripts — generated at first launch, not stored in repo
+demo/*.funscript
 
 # demo media — large video/audio files; funscripts are committed, binaries are not
 demo/*.mp4
