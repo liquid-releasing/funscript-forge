@@ -260,12 +260,7 @@ plugins/*.py
 
 # Private media — on disk, not in repo
 test_media_private/
-ml_video_examples/**/*.mp4
-ml_video_examples/**/*.mp3
-ml_video_examples/**/*.wav
-ml_video_examples/**/*.mkv
-ml_video_examples/**/*.avi
-ml_video_examples/**/*.wmv
+ml_video_examples/
 test_videos/
 *.wmv
 
