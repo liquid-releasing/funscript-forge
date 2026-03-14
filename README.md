@@ -9,6 +9,32 @@ expressive performance sections, and gentle breaks.
 
 ---
 
+## eTransforms — Estim Character
+
+FunscriptForge now includes an **eTransforms** tab — the bridge between funscript editing and estim output generation.
+
+Pick a character for the estim output. Each one controls how sensation moves and builds over time.
+
+| Character | What it means |
+|---|---|
+| **Gentle** | Soft, slow-building. Narrow arc, soft pulse onset. Good for intimate or slow content. |
+| **Reactive** | Sharp, tracks action closely. Wide arc, instant response. Good for fast, intense content. |
+| **Scene Builder** | Builds gradually over the scene. Circular arc, slow ramp. Rewards patience. |
+| **Unpredictable** | Random direction changes, varied character. Keeps you guessing. |
+| **Balanced** | Middle of everything. Good starting point for any content. |
+
+Each character shows 1–2 contextual sliders most relevant to its personality, a live electrode path preview, and a plain-English "What you'll feel" summary.
+
+### Integration with funscript-tools
+
+The eTransforms tab connects directly to [funscript-tools](https://github.com/liquid-releasing/funscript-tools). The same five characters appear in both tools — pick a character in FunScriptForge, and funscript-tools applies it to generate the alpha / beta / pulse_frequency estim outputs.
+
+The **character name is the API** between all three tools: Explorer analysis → FunScriptForge transforms → funscript-tools eTransform → restim playback.
+
+> **Current scope:** eTransforms apply globally to the full funscript. Per-section (phrase-level) character support is the next milestone.
+
+---
+
 ## Features
 
 ### Analysis
