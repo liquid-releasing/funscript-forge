@@ -46,6 +46,7 @@ from ui.streamlit.panels import catalog_view as catalog_view_panel
 from ui.streamlit.panels import export_panel
 from ui.streamlit.panels import pattern_editor as pattern_editor_panel
 from ui.streamlit.panels import transform_catalog as transform_catalog_panel
+from ui.streamlit.panels import etransforms as etransforms_panel
 from ui.streamlit.panels import viewer as viewer_panel
 
 # ------------------------------------------------------------------
@@ -588,8 +589,8 @@ def _main() -> None:
     # 4 tabs: Phrase (Selector ↔ Editor), Pattern Editor, Transform Catalog, Export.
     # The Phrase tab shows the Selector or Editor depending on view_state.has_selection(),
     # eliminating the need for JS-based programmatic tab navigation.
-    tab_phrase, tab_pattern, tab_transforms, tab_export = st.tabs(
-        ["Phrases", "Patterns", "Catalogs", "Export"]
+    tab_phrase, tab_pattern, tab_transforms, tab_etransforms, tab_export = st.tabs(
+        ["Phrases", "Patterns", "Catalogs", "eTransforms", "Export"]
     )
 
     with tab_phrase:
@@ -604,8 +605,12 @@ def _main() -> None:
         st.session_state["active_tab"] = 2
         transform_catalog_panel.render()
 
-    with tab_export:
+    with tab_etransforms:
         st.session_state["active_tab"] = 3
+        etransforms_panel.render(project)
+
+    with tab_export:
+        st.session_state["active_tab"] = 4
         export_panel.render(project)
 
     # Keyboard shortcuts — registered once per page load via a sentinel flag on
