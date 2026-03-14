@@ -258,7 +258,18 @@ user_transforms/*.json
 plugins/*.py
 !plugins/example_*.py
 
-# Confidential internal documents — stored in funscript-updater-internal-docs (outside repo)
+# Private media — on disk, not in repo
+test_media_private/
+ml_video_examples/**/*.mp4
+ml_video_examples/**/*.mp3
+ml_video_examples/**/*.wav
+ml_video_examples/**/*.mkv
+ml_video_examples/**/*.avi
+ml_video_examples/**/*.wmv
+test_videos/
+*.wmv
+
+# Confidential internal documents — stored outside repo
 docs/marketing-plan-internal.md
 docs/cost-estimates.md
 docs/vision-agentic.md
