@@ -302,6 +302,156 @@ def _render_card(char: dict, is_selected: bool, col):
                 st.rerun()
 
 # ---------------------------------------------------------------------------
+# ReTransform Phrases
+# ---------------------------------------------------------------------------
+
+def _render_phrases(global_selected: str, global_color: str, project) -> None:
+    st.markdown("---")
+    st.markdown("## ReTransform Phrases")
+    st.markdown(
+        f"Global character: **{global_selected}** — applied to all phrases by default. "
+        "Override individual phrases here, or leave them as None to inherit Global."
+    )
+
+    # Get phrases from project, or show placeholder
+    phrases = []
+    if project is not None and hasattr(project, "work_items") and project.work_items:
+        phrases = project.work_items
+    else:
+        # Placeholder phrases for when no project is loaded
+        phrases = [type("P", (), {"item_id": f"phrase_{i}", "start_ms": i*10000, "end_ms": (i+1)*10000, "bpm": 90.0})()
+                   for i in range(5)]
+        st.caption("No funscript loaded — showing placeholder phrases.")
+
+    n = len(phrases)
+
+    # Phrase navigator
+    if "rt_phrase_idx" not in st.session_state:
+        st.session_state["rt_phrase_idx"] = 0
+    idx = st.session_state["rt_phrase_idx"]
+    idx = max(0, min(idx, n - 1))
+
+    nav_left, nav_mid, nav_right = st.columns([1, 3, 1])
+    with nav_left:
+        if st.button("← Previous", disabled=(idx == 0), use_container_width=True):
+            st.session_state["rt_phrase_idx"] = idx - 1
+            st.rerun()
+    with nav_mid:
+        phrase = phrases[idx]
+        start_s = getattr(phrase, "start_ms", 0) / 1000
+        end_s   = getattr(phrase, "end_ms", 0) / 1000
+        st.markdown(
+            f"<div style='text-align:center;padding:6px 0'>"
+            f"<strong>Phrase {idx+1} of {n}</strong> &nbsp;·&nbsp; "
+            f"{start_s:.1f}s – {end_s:.1f}s"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+    with nav_right:
+        if st.button("Next →", disabled=(idx == n - 1), use_container_width=True):
+            st.session_state["rt_phrase_idx"] = idx + 1
+            st.rerun()
+
+    st.markdown("")
+
+    # Phrase override selector
+    phrase_key = getattr(phrase, "item_id", f"phrase_{idx}")
+    overrides = st.session_state.get("rt_phrase_overrides", {})
+    current_override = overrides.get(phrase_key, None)
+
+    char_names = ["None — use Global"] + [c["name"] for c in _CHARACTERS]
+    current_label = current_override if current_override else "None — use Global"
+    default_idx = char_names.index(current_label) if current_label in char_names else 0
+
+    left_col, right_col = st.columns([1, 2])
+
+    with left_col:
+        chosen_label = st.selectbox(
+            f"Character for phrase {idx+1}",
+            options=char_names,
+            index=default_idx,
+            key=f"rt_phrase_select_{phrase_key}",
+            help="None = inherit the Global character. Pick a character to override this phrase only.",
+        )
+        chosen = None if chosen_label.startswith("None") else chosen_label
+        char_data = next((c for c in _CHARACTERS if c["name"] == chosen), None)
+
+        # Sliders for chosen override
+        slider_vals = {}
+        if char_data:
+            st.markdown(f"**{char_data['emoji']} {char_data['name']}** — {char_data['tagline']}")
+            for spec in char_data["sliders"]:
+                key = f"rt_phrase_{phrase_key}_{spec['key']}"
+                val = st.slider(
+                    spec["label"],
+                    min_value=spec["min"],
+                    max_value=spec["max"],
+                    value=st.session_state.get(key, spec["default"]),
+                    step=spec["step"],
+                    format=spec["format"],
+                    help=spec["hint"],
+                    key=key,
+                )
+                slider_vals[spec["key"]] = val
+        else:
+            effective = next((c for c in _CHARACTERS if c["name"] == global_selected), None)
+            if effective:
+                eff_color = effective["color"]
+                eff_emoji = effective["emoji"]
+                eff_name  = effective["name"]
+                st.markdown(
+                    f"<div style='color:#aaa;font-size:0.88em;padding:8px 0'>"
+                    f"Inheriting Global: <strong style='color:{eff_color}'>"
+                    f"{eff_emoji} {eff_name}</strong></div>",
+                    unsafe_allow_html=True,
+                )
+
+        # Accept button
+        st.markdown("")
+        accept_col, clear_col = st.columns(2)
+        with accept_col:
+            if st.button("✓ Accept", type="primary", use_container_width=True, key=f"rt_accept_{phrase_key}"):
+                overrides = st.session_state.get("rt_phrase_overrides", {})
+                if chosen:
+                    overrides[phrase_key] = chosen
+                else:
+                    overrides.pop(phrase_key, None)
+                st.session_state["rt_phrase_overrides"] = overrides
+                # Auto-advance to next phrase
+                if idx < n - 1:
+                    st.session_state["rt_phrase_idx"] = idx + 1
+                st.rerun()
+        with clear_col:
+            if st.button("Clear override", use_container_width=True, key=f"rt_clear_{phrase_key}"):
+                overrides = st.session_state.get("rt_phrase_overrides", {})
+                overrides.pop(phrase_key, None)
+                st.session_state["rt_phrase_overrides"] = overrides
+                st.rerun()
+
+    with right_col:
+        # Summary of all overrides so far
+        overrides = st.session_state.get("rt_phrase_overrides", {})
+        if overrides:
+            st.markdown("**Phrase overrides**")
+            for i, p in enumerate(phrases):
+                pid = getattr(p, "item_id", f"phrase_{i}")
+                if pid in overrides:
+                    c = next((ch for ch in _CHARACTERS if ch["name"] == overrides[pid]), None)
+                    color = c["color"] if c else "#aaa"
+                    st.markdown(
+                        f"<span style='color:{color}'>● Phrase {i+1}: {overrides[pid]}</span>",
+                        unsafe_allow_html=True,
+                    )
+        else:
+            st.markdown(
+                f"<div style='color:#aaa;font-size:0.88em;padding:8px 0'>"
+                f"No overrides yet — all phrases will use Global: "
+                f"<strong>{global_selected}</strong></div>",
+                unsafe_allow_html=True,
+            )
+
+
+# ---------------------------------------------------------------------------
 # Main render
 # ---------------------------------------------------------------------------
 
@@ -324,8 +474,8 @@ def render(project=None) -> None:
         proceed_col, _ = st.columns([1, 3])
         with proceed_col:
             if st.button("Proceed to ReTransform Phrases →", type="primary", use_container_width=True):
-                st.session_state["retransform_tab"] = "phrases"
-                st.info("ReTransform Phrases — per-phrase refinement coming in the next release.")
+                st.session_state["retransform_show_phrases"] = True
+                st.rerun()
 
     st.divider()
 
@@ -343,3 +493,7 @@ def render(project=None) -> None:
             "These will expose all alpha/beta generation, frequency, and pulse settings "
             "for the selected character."
         )
+
+    # ReTransform Phrases — only shown after Global selection
+    if selected and st.session_state.get("retransform_show_phrases", False):
+        _render_phrases(selected, selected_color, project)
