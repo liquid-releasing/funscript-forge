@@ -185,8 +185,8 @@ _BROWSE_SENTINEL = "— enter a path below —"
 _DEMO_SENTINEL   = "── demo files ──"
 
 _DEMO_FILES = [
-    os.path.join(_ROOT, "demo", "examples", "big_buck_bunny.raw.funscript"),
-    os.path.join(_ROOT, "demo", "examples", "big_buck_bunny.forged.funscript"),
+    os.path.join(_ROOT, "demo", "big_buck_bunny.raw.funscript"),
+    os.path.join(_ROOT, "demo", "big_buck_bunny.forged.funscript"),
 ]
 
 
