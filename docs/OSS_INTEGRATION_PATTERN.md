@@ -15,16 +15,37 @@ breaking change scattered across your entire codebase.
 ## The Solution: Fork → Adapter → UI
 
 ```
-upstream repo                    your fork
-─────────────────────────────    ──────────────────────────────────────────
-processor.py                     cli.py              forge_window.py
-funscript.py      ────────────►  (your adapter)  ►  (UI / FunScriptForge tab)
-config.py                        stable API
+upstream repo          your fork
+──────────────         ─────────────────────────────────────────────────────
+processor.py           cli.py (adapter)  ──►  forge_window.py  (tkinter dev)
+funscript.py  ──────►  stable API        ──►  Streamlit page   (desktop app)
+config.py                                ──►  Streamlit page   (SaaS)
 ```
 
 `cli.py` is the **adapter** — it translates between the upstream API and a
-stable contract that your UI binds to. When upstream changes, you fix `cli.py`.
-The UI never changes.
+stable contract that all UIs bind to. When upstream changes, you fix `cli.py`.
+The UIs never change.
+
+### Three deployment targets, one adapter
+
+| Target | UI layer | How it runs |
+|--------|----------|-------------|
+| Standalone dev/test | tkinter (`forge_window.py`) | `python forge.py` |
+| Desktop (Win/Mac/Linux) | Streamlit page in FunScriptForge | PyInstaller + local Streamlit |
+| SaaS | Streamlit page in FunScriptForge | Deployed cloud Streamlit |
+
+The tkinter standalone is a **development harness** — fast to iterate on,
+no Streamlit overhead. Once the UX is right, the Streamlit tab calls the
+exact same `cli.py` functions.
+
+### What cli.py must return
+
+Because Streamlit renders the output, `cli.py` must only return types that
+are UI-framework agnostic:
+- `dict`, `list`, `str`, `Path`
+- `numpy` arrays (for waveform data — Streamlit/plotly can render these natively)
+- Simple dataclasses
+- **Never:** tkinter objects, upstream class instances, open file handles
 
 ---
 
